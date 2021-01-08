@@ -186,7 +186,7 @@ predictions = {"pctr": click_pred, "pcvr": pcvr}
 # ------bulid loss------
 conversion_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=conversion_label, logits=cvr))
 loss_click = tf.nn.softmax_cross_entropy_with_logits(labels=click_label, logits=outputs)
-loss_click = tf.boolean_mask(loss_click, mask)  # 返回实际有效的seq
+loss_click = tf.boolean_mask(loss_click, mask)  # return real seq
 loss_click = tf.reduce_mean(loss_click)
 
 loss = (1 - ctr_task_wgt) * loss_click + ctr_task_wgt * conversion_loss

@@ -12,7 +12,7 @@ tf.flags.DEFINE_integer("feature_size", 638095, "Size of other_size")
 tf.flags.DEFINE_integer("embedding_size", 32, "Embedding size")
 tf.flags.DEFINE_integer("num_epochs", 100, "Number of epochs")
 tf.flags.DEFINE_integer("field_size", 11, "Number of common fields")
-tf.flags.DEFINE_integer("batch_size", 8000, "Number of batch size")
+tf.flags.DEFINE_integer("batch_size", 10000, "Number of batch size")
 tf.flags.DEFINE_integer("log_steps", 10, "save summary every steps")
 tf.flags.DEFINE_float("learning_rate", 0.001, "learning rate")
 tf.flags.DEFINE_float("l2_reg", 0.01, "L2 regularization")
@@ -26,7 +26,7 @@ tf.flags.DEFINE_boolean("batch_norm", True, "perform batch normaization (True or
 tf.flags.DEFINE_float("batch_norm_decay", 0.9, "decay for the moving average(recommend trying decay=0.9)")
 tf.flags.DEFINE_string("data_dir", './../alicpp', "data dir")
 tf.flags.DEFINE_string("dt_dir", '', "data dt partition")
-tf.flags.DEFINE_string("model_dir", './../alicpp/model_alicpp', "model check point dir")
+tf.flags.DEFINE_string("model_dir", './../alicpp/model_alicpp_esmm2', "model check point dir")
 tf.flags.DEFINE_string("servable_model_dir", '', "export servable model for TensorFlow Serving")
 tf.flags.DEFINE_string("task_type", 'train', "task type {train, infer, eval}")
 tf.flags.DEFINE_boolean("clear_existing_model", False, "clear existing model or not")
@@ -202,10 +202,35 @@ def model_fn(features, labels, mode, params):
                                                   scope='ctr_out')
         y_ctr = tf.reshape(y_ctr, shape=[-1])
 
+    # Add the third conditional probability to the probability calculation
+    with tf.name_scope("CAR_Task"):
+        if mode == tf.estimator.ModeKeys.TRAIN:
+            train_phase = True
+        else:
+            train_phase = False
+        x_car = x_concat
+        for i in range(len(layers)):
+            x_car = tf.contrib.layers.fully_connected(inputs=x_car, num_outputs=layers[i],
+                                                      weights_regularizer=tf.contrib.layers.l2_regularizer(l2_reg),
+                                                      scope='car_mlp%d' % i)
+            x_car = tf.nn.relu(x_car)
+            if FLAGS.batch_norm:
+                x_car = batch_norm_layer(x_car, train_phase=train_phase,
+                                         scope_bn='car_bn_%d' % i)
+            if mode == tf.estimator.ModeKeys.TRAIN:
+                x_car = tf.nn.dropout(x_car, keep_prob=dropout[
+                    i])  # Apply Dropout after all BN layers and set dropout=0.8(drop_ratio=0.2)
+
+        y_car = tf.contrib.layers.fully_connected(inputs=x_car, num_outputs=1, activation_fn=tf.identity,
+                                                  weights_regularizer=tf.contrib.layers.l2_regularizer(l2_reg),
+                                                  scope='car_out')
+        y_car = tf.reshape(y_car, shape=[-1])
+
     with tf.variable_scope("MTL-Layer"):
         pctr = tf.sigmoid(y_ctr)
         pcvr = tf.sigmoid(y_cvr)
-        pctcvr = pctr * pcvr
+        pcar = tf.sigmoid(y_car)
+        pctcvr = pctr * pcvr * pcar
     predictions = {"pcvr": pcvr, "pctr": pctr, "pctcvr": pctcvr}
     export_outputs = {
         tf.saved_model.signature_constants.DEFAULT_SERVING_SIGNATURE_DEF_KEY: tf.estimator.export.PredictOutput(

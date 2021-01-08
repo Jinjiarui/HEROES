@@ -1,3 +1,6 @@
+import glob
+
+
 def loadCriteoBatch(batchsize, max_seq_len, max_input, fin, min_input=3):
     total_data = []
     total_seqlen = []
@@ -43,3 +46,19 @@ def loaddualattention(batchsize, max_seq_len, max_input, fin, min_input=3):
                 click.append([1, 0])
         click_label.append(click + [[0, 0]] * (max_seq_len - total_seqlen[i]))
     return total_data, click_label, total_label, total_seqlen
+
+
+if __name__ == '__main__':
+    all_files = glob.glob("../Criteo/t*/*.txt")
+    print(all_files)
+    for single_file in all_files:
+        out_file = single_file + 'small'
+        with open(single_file) as f:
+            with open(out_file, 'w') as out_f:
+                for i in range(1000):
+                    tmp = f.readline()
+                    out_f.write(tmp)
+                    (seq_len, label) = [int(_) for _ in tmp.rstrip().split()]
+                    for j in range(seq_len):
+                        line = f.readline()
+                        out_f.write(line)

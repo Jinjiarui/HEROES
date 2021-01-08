@@ -9,7 +9,7 @@ import tensorflow as tf
 FLAGS = tf.flags.FLAGS
 tf.flags.DEFINE_integer("num_threads", 64, "Number of threads")
 tf.flags.DEFINE_integer("feature_size", 638095, "Size of other_size")
-tf.flags.DEFINE_integer("embedding_size", 32, "Embedding size")
+tf.flags.DEFINE_integer("embedding_size", 96, "Embedding size")
 tf.flags.DEFINE_integer("num_epochs", 100, "Number of epochs")
 tf.flags.DEFINE_integer("field_size", 11, "Number of common fields")
 tf.flags.DEFINE_integer("batch_size", 8000, "Number of batch size")
@@ -19,14 +19,15 @@ tf.flags.DEFINE_float("l2_reg", 0.01, "L2 regularization")
 tf.flags.DEFINE_string("loss_type", 'log_loss', "loss type {square_loss, log_loss}")
 tf.flags.DEFINE_float("ctr_task_wgt", 0.5, "loss weight of ctr task")
 tf.flags.DEFINE_string("optimizer", 'Adam', "optimizer type {Adam, Adagrad, GD, Momentum}")
-tf.flags.DEFINE_string("deep_layers", '256,128,64', "deep layers")
+tf.flags.DEFINE_string("deep_layers", '512,256', "deep layers")
+tf.flags.DEFINE_string("expert_layers", '128,96,64', "expert_layers")
 tf.flags.DEFINE_string("dropout", '0.5,0.5,0.5', "dropout rate")
 tf.flags.DEFINE_string("gpus", '', "list of gpus")
 tf.flags.DEFINE_boolean("batch_norm", True, "perform batch normaization (True or False)")
 tf.flags.DEFINE_float("batch_norm_decay", 0.9, "decay for the moving average(recommend trying decay=0.9)")
 tf.flags.DEFINE_string("data_dir", './../alicpp', "data dir")
 tf.flags.DEFINE_string("dt_dir", '', "data dt partition")
-tf.flags.DEFINE_string("model_dir", './../alicpp/model_alicpp', "model check point dir")
+tf.flags.DEFINE_string("model_dir", './../alicpp/model_alicpp_mmoe', "model check point dir")
 tf.flags.DEFINE_string("servable_model_dir", '', "export servable model for TensorFlow Serving")
 tf.flags.DEFINE_string("task_type", 'train', "task type {train, infer, eval}")
 tf.flags.DEFINE_boolean("clear_existing_model", False, "clear existing model or not")
@@ -106,6 +107,7 @@ def model_fn(features, labels, mode, params):
     learning_rate = params["learning_rate"]
     # optimizer = params["optimizer"]
     layers = list(map(int, params["deep_layers"].split(',')))
+    expert_layers = list(map(int, params["expert_layers"].split(',')))
     dropout = list(map(float, params["dropout"].split(',')))
     ctr_task_wgt = params["ctr_task_wgt"]
 
@@ -155,13 +157,45 @@ def model_fn(features, labels, mode, params):
             [tf.reshape(common_embs, shape=[-1, common_dims]), u_cat_emb, u_shop_emb, u_brand_emb, u_int_emb, a_cat_emb,
              a_shop_emb, a_brand_emb, a_int_emb, x_a_emb, x_b_emb, x_c_emb, x_d_emb], axis=1)
         print(x_concat.shape)
+    expert_num = 3
+    with tf.variable_scope("Gate1"):
+        gate1 = tf.contrib.layers.fully_connected(inputs=x_concat, num_outputs=expert_num,
+                                                  weights_regularizer=tf.contrib.layers.l2_regularizer(l2_reg),
+                                                  scope='gate1')
+        gate1 = tf.nn.softmax(gate1)
+    with tf.variable_scope("Gate2"):
+        gate2 = tf.contrib.layers.fully_connected(inputs=x_concat, num_outputs=expert_num,
+                                                  weights_regularizer=tf.contrib.layers.l2_regularizer(l2_reg),
+                                                  scope='gate2')
+        gate2 = tf.nn.softmax(gate2)  # (bs,3)
+
+    expert_result = []
+    for i in range(expert_num):
+        with tf.name_scope("Expert{}".format(i)):
+            if mode == tf.estimator.ModeKeys.TRAIN:
+                train_phase = True
+            else:
+                train_phase = False
+            expert = x_concat
+            for j in range(len(expert_layers)):
+                expert = tf.contrib.layers.fully_connected(inputs=expert, num_outputs=expert_layers[j],
+                                                           weights_regularizer=tf.contrib.layers.l2_regularizer(l2_reg),
+                                                           scope='Expert{}{}'.format(i, j))
+                expert = tf.nn.relu(expert)
+                if FLAGS.batch_norm:
+                    expert = batch_norm_layer(expert, train_phase=train_phase,
+                                              scope_bn='exp_bn_{}{}'.format(i, j))
+                if mode == tf.estimator.ModeKeys.TRAIN:
+                    expert = tf.nn.dropout(expert, keep_prob=dropout[j])
+        expert_result.append(expert)
+    expert_result = tf.transpose(tf.stack(expert_result), (1, 0, 2))  # (bs,3,dim)
 
     with tf.name_scope("CVR_Task"):
         if mode == tf.estimator.ModeKeys.TRAIN:
             train_phase = True
         else:
             train_phase = False
-        x_cvr = x_concat
+        x_cvr = tf.reduce_sum(tf.multiply(expert_result, tf.reshape(gate1, shape=(-1, 3, 1))), axis=1)
         for i in range(len(layers)):
             x_cvr = tf.contrib.layers.fully_connected(inputs=x_cvr, num_outputs=layers[i],
                                                       weights_regularizer=tf.contrib.layers.l2_regularizer(l2_reg),
@@ -184,7 +218,7 @@ def model_fn(features, labels, mode, params):
             train_phase = True
         else:
             train_phase = False
-        x_ctr = x_concat
+        x_ctr = tf.reduce_sum(tf.multiply(expert_result, tf.reshape(gate2, shape=(-1, 3, 1))), axis=1)
         for i in range(len(layers)):
             x_ctr = tf.contrib.layers.fully_connected(inputs=x_ctr, num_outputs=layers[i],
                                                       weights_regularizer=tf.contrib.layers.l2_regularizer(l2_reg),
@@ -277,6 +311,7 @@ def main(_):
     print('dropout ', FLAGS.dropout)
     print('loss_type ', FLAGS.loss_type)
     print('optimizer ', FLAGS.optimizer)
+    print('expert_layers', FLAGS.expert_layers)
     print('learning_rate ', FLAGS.learning_rate)
     print('l2_reg ', FLAGS.l2_reg)
     print('ctr_task_wgt ', FLAGS.ctr_task_wgt)
@@ -302,6 +337,7 @@ def main(_):
         "learning_rate": FLAGS.learning_rate,
         "l2_reg": FLAGS.l2_reg,
         "deep_layers": FLAGS.deep_layers,
+        'expert_layers': FLAGS.expert_layers,
         "dropout": FLAGS.dropout,
         "ctr_task_wgt": FLAGS.ctr_task_wgt
     }

@@ -160,15 +160,8 @@ def model_fn(features, labels, mode, params):
     y = labels['y']
     z = labels['z']
 
-    epsilon = 1e-7
-    click_num = tf.to_float(tf.count_nonzero(y))
-    conversion_num = tf.to_float(tf.count_nonzero(z))
-    click_weight = (tf.to_float(tf.size(y)) - click_num) / (click_num + epsilon)
-    conversion_weight = (tf.to_float(tf.size(z)) - conversion_num) / (conversion_num + epsilon)
-
     ctr_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=y_ctr, labels=y))
-    ctcvr_loss = tf.reduce_mean(
-        -z * tf.log(pctcvr + epsilon) * conversion_weight - (1 - z) * tf.log(1 - pctcvr + epsilon))
+    ctcvr_loss = tf.reduce_mean(tf.losses.log_loss(predictions=pctcvr, labels=z))
     loss = ctr_task_wgt * ctr_loss + (1 - ctr_task_wgt) * ctcvr_loss + l2_reg * tf.nn.l2_loss(Emb)
 
     tf.summary.scalar('ctr_loss', ctr_loss)

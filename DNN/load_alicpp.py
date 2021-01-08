@@ -14,7 +14,7 @@ def loadAliBatch(max_seq_len, fin, batch_seq_list):
         tmp_id = []
         tmp_value = []
         click = []
-        label = None
+        label = []
         try:
             for i in range(seq_len):
                 line = fin.readline().rstrip().split()
@@ -22,20 +22,18 @@ def loadAliBatch(max_seq_len, fin, batch_seq_list):
                 splits = np.reshape(splits, (-1, 3))
                 tmp_id.append(splits[:, 1].astype(np.int).tolist())
                 tmp_value.append(splits[:, 2].astype(np.float).tolist())
-                if int(line[2]) == 1:
-                    click.append([1, 0])
-                else:
-                    click.append([0, 1])
-                if i == seq_len - 1:
-                    label = int(line[3])
+                click.append([int(line[2])])
+                label.append([int(line[3])])
             tmp_id = tmp_id[-max_seq_len:]
             tmp_value = tmp_value[-max_seq_len:]
             click = click[-max_seq_len:]
+            label = label[-max_seq_len:]
             if seq_len < max_seq_len:
                 for _ in range(seq_len, max_seq_len):
                     tmp_id.append([0])
                     tmp_value.append([1])
-                    click.append([0, 0])
+                    click.append([0])
+                    label.append([0])
             else:
                 seq_len = max_seq_len
         except:
