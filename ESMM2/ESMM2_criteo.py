@@ -2,8 +2,13 @@ import glob
 import os
 import random
 import shutil
+import sys
 from datetime import date, timedelta
 
+import numpy as np
+
+sys.path.append("../")
+from utils import utils
 import tensorflow as tf
 
 FLAGS = tf.flags.FLAGS
@@ -43,7 +48,7 @@ def batch_norm_layer(x, train_phase, scope_bn):
     return z
 
 
-def input_fn(filenames, batch_size=32, num_epochs=1, perform_shuffle=False):
+def input_fn(filenames, batch_size=32, num_epochs=1, perform_shuffle=False, predict_mode=False):
     print('Parsing', filenames)
 
     def _parse_fn(record):
@@ -53,6 +58,8 @@ def input_fn(filenames, batch_size=32, num_epochs=1, perform_shuffle=False):
             "features": tf.FixedLenFeature([FLAGS.feature_size], tf.int64)
         }
         parsed = tf.parse_single_example(record, features)
+        if predict_mode:
+            return parsed, {}
         y = parsed.pop('y')
         z = parsed.pop('z')
         return parsed, {"y": y, "z": z}
@@ -89,10 +96,10 @@ def model_fn(features, labels, mode, params):
     Emb = tf.get_variable(name='Embeddings', shape=[features_num, embedding_size],
                           initializer=tf.glorot_normal_initializer())
 
-    features = features['features']
-    print(features.shape)
+    the_features = features['features']
+    print(the_features.shape)
     with tf.variable_scope("Shared-Embedding-layer"):
-        emb_feature = tf.nn.embedding_lookup(Emb, features)
+        emb_feature = tf.nn.embedding_lookup(Emb, the_features)
         print(emb_feature.shape)
         emb_reshape = tf.reshape(emb_feature, shape=(-1, emb_feature.shape[1] * emb_feature.shape[2]))
         print(emb_reshape.shape)
@@ -176,6 +183,8 @@ def model_fn(features, labels, mode, params):
             predictions)}
     # Provide an estimator spec for `ModeKeys.PREDICT`
     if mode == tf.estimator.ModeKeys.PREDICT:
+        predictions["y"] = features["y"]
+        predictions["z"] = features["z"]
         return tf.estimator.EstimatorSpec(
             mode=mode,
             predictions=predictions,
@@ -188,7 +197,6 @@ def model_fn(features, labels, mode, params):
     ctr_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=y_ctr, labels=y))
     ctcvr_loss = tf.reduce_mean(tf.losses.log_loss(predictions=pctcvr, labels=z))
     loss = ctr_task_wgt * ctr_loss + (1 - ctr_task_wgt) * ctcvr_loss + l2_reg * tf.nn.l2_loss(Emb)
-
 
     tf.summary.scalar('ctr_loss', ctr_loss)
     tf.summary.scalar('cvr_loss', ctcvr_loss)
@@ -228,7 +236,7 @@ def main(_):
     # ------check Arguments------
     if FLAGS.dt_dir == "":
         FLAGS.dt_dir = (date.today() + timedelta(-1)).strftime('%Y%m%d')
-    FLAGS.model_dir = FLAGS.model_dir + FLAGS.dt_dir + "2"
+    FLAGS.model_dir = FLAGS.model_dir + '20210107' + "2"
 
     print('task_type ', FLAGS.task_type)
     print('model_dir ', FLAGS.model_dir)
@@ -288,11 +296,45 @@ def main(_):
     elif FLAGS.task_type == 'eval':
         Estimator.evaluate(input_fn=lambda: input_fn(te_files, num_epochs=1, batch_size=FLAGS.batch_size), steps=None)
     elif FLAGS.task_type == 'infer':
-        preds = Estimator.predict(input_fn=lambda: input_fn(te_files, num_epochs=1, batch_size=FLAGS.batch_size),
-                                  predict_keys=None)
-        with open(FLAGS.data_dir + "/pred2.txt", "w") as fo:
-            for prob in preds:
-                fo.write("%f\t%f\n" % (prob['pctr'], prob['pcvr']))
+        preds = Estimator.predict(
+            input_fn=lambda: input_fn(te_files, num_epochs=1, batch_size=FLAGS.batch_size, predict_mode=True),
+            predict_keys=None)
+        click_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
+        conversion_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
+        pctr = []
+        y = []
+        pctcvr = []
+        z = []
+        for prob in preds:
+            pctr.append(prob['pctr'])
+            y.append(prob['y'])
+
+            pctcvr.append(prob['pctcvr'])
+            z.append(prob['z'])
+        pctr = np.array(pctr)
+        y = np.array(y)
+        pctcvr = np.array(pctcvr)
+        z = np.array(z)
+        click_result['loss'] = utils.evaluate_logloss(pctr, y)
+        click_result['acc'] = utils.evaluate_acc(pctr, y)
+        click_result['auc'] = utils.evaluate_auc(pctr, y)
+        click_result['f1'] = utils.evaluate_f1_score(pctr, y)
+        click_result['ndcg'] = utils.evaluate_ndcg(None, pctr, y, len(pctr))
+        click_result['map'] = utils.evaluate_map(len(pctr), pctr, y, len(pctr))
+
+        conversion_result['loss'] = utils.evaluate_logloss(pctcvr, z)
+        conversion_result['acc'] = utils.evaluate_acc(pctcvr, z)
+        conversion_result['auc'] = utils.evaluate_auc(pctcvr, z)
+        conversion_result['f1'] = utils.evaluate_f1_score(pctcvr, z)
+        conversion_result['ndcg'] = utils.evaluate_ndcg(None, pctcvr, z, len(pctcvr))
+        conversion_result['map'] = utils.evaluate_map(len(pctcvr), pctcvr, z, len(pctcvr))
+        print("Click Result")
+        for k, v in click_result.items():
+            print("{}:{}".format(k, v), end='\t')
+        print()
+        print("Conversion Result")
+        for k, v in conversion_result.items():
+            print("{}:{}".format(k, v), end='\t')
 
 
 if __name__ == "__main__":

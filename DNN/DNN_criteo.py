@@ -1,17 +1,20 @@
 import glob
 import os
-import pickle
 import shutil
+import sys
 from datetime import timedelta, date
 
 import numpy as np
 import tensorflow as tf
 
-from load_alicpp import loadAliBatch
+sys.path.append("../")
+from utils import utils
+
+from load_criteo import loadCriteoBatch
 
 FLAGS = tf.flags.FLAGS
 tf.flags.DEFINE_integer("num_threads", 64, "Number of threads")
-tf.flags.DEFINE_integer("max_features", 638072, "Number of max_features")
+tf.flags.DEFINE_integer("max_features", 5897, "Number of max_features")
 tf.flags.DEFINE_integer("embedding_size", 96, "Embedding size")
 tf.flags.DEFINE_integer("seq_max_len", 160, "seq_max_len")
 tf.flags.DEFINE_integer("num_epochs", 100, "Number of epochs")
@@ -27,51 +30,37 @@ tf.flags.DEFINE_float("keep_prob", 0.5, "dropout rate")
 tf.flags.DEFINE_string("gpus", '', "list of gpus")
 tf.flags.DEFINE_boolean("batch_norm", True, "perform batch normaization (True or False)")
 tf.flags.DEFINE_float("batch_norm_decay", 0.9, "decay for the moving average(recommend trying decay=0.9)")
-tf.flags.DEFINE_string("data_dir", './../alicpp', "data dir")
+tf.flags.DEFINE_string("data_dir", './../Criteo', "data dir")
 tf.flags.DEFINE_string("dt_dir", '', "data dt partition")
-tf.flags.DEFINE_string("model_dir", './../alicpp/model_alicpp_dnn', "model check point dir")
+tf.flags.DEFINE_string("model_dir", './../Criteo/model_Criteo_dnn', "model check point dir")
 tf.flags.DEFINE_string("servable_model_dir", '', "export servable model for TensorFlow Serving")
 tf.flags.DEFINE_string("task_type", 'train', "task type {train, infer, eval}")
 tf.flags.DEFINE_boolean("clear_existing_model", False, "clear existing model or not")
 
 os.environ['CUDA_VISIBLE_DEVICES'] = FLAGS.gpus
 
-
-# 转化一个序列列表为稀疏矩阵
-def sparse_tuple_from(sequences, dtype=np.int32):
-    indices = []
-    values = []
-    for n, seq in enumerate(sequences):
-        indices.extend(zip([n] * len(seq), range(len(seq))))
-        values.extend(seq)
-
-    indices = np.asarray(indices, dtype=np.int64)
-    values = np.asarray(values, dtype=dtype)
-    shape = np.asarray([len(sequences), indices[:, 1].max() + 1], dtype=np.int64)
-    return indices, values, shape
-
-
-input_id = tf.sparse_placeholder(tf.int32, shape=[None, None], name='id')
-input_value = tf.sparse_placeholder(tf.float32, shape=[None, None], name='value')
+input = tf.placeholder(tf.float32,
+                       shape=[None, FLAGS.seq_max_len, 11])
 seq_len = tf.placeholder(tf.int32, shape=[None], name='seqlen')
-click_label = tf.placeholder(tf.float32, shape=[None, FLAGS.seq_max_len, FLAGS.n_classes], name='click_labels')
+click_label = tf.placeholder(tf.float32, shape=[None, FLAGS.seq_max_len, FLAGS.n_classes], name='clicks')
 conversion_label = tf.placeholder(tf.float32, shape=[None, FLAGS.seq_max_len, FLAGS.n_classes], name='labels')
-
 embedding_size = FLAGS.embedding_size
 l2_reg = FLAGS.l2_reg
 learning_rate = FLAGS.learning_rate
 max_features = FLAGS.max_features
 seq_max_len = FLAGS.seq_max_len
 ctr_task_wgt = FLAGS.ctr_task_wgt
-n_hidden = FLAGS.n_hidden
-n_classes = FLAGS.n_classes
 embedding_matrix = tf.Variable(
     tf.random_normal([max_features, embedding_size], stddev=0.1))
-
-input = tf.nn.embedding_lookup_sparse(embedding_matrix, sp_ids=input_id, sp_weights=input_value)  # (bs*seq,embed)
-input = tf.reshape(input, (-1, seq_max_len, input.shape[-1]))  # (bs,seq,embed)
-x = tf.concat((input, click_label), axis=2)
-
+print(input.shape)
+n_hidden = FLAGS.n_hidden
+n_classes = FLAGS.n_classes
+x1, x2 = tf.split(input, [1, 10], 2)
+x2 = tf.to_int32(x2)
+x2 = tf.nn.embedding_lookup(embedding_matrix, x2)
+x2 = tf.reshape(x2, [-1, seq_max_len, 10 * embedding_size])
+x = tf.concat((x1, x2), axis=2)
+print(x.shape)
 with tf.name_scope('P_o'), tf.variable_scope('P_o', reuse=tf.AUTO_REUSE):
     lstm_cell_o = tf.contrib.rnn.BasicLSTMCell(FLAGS.n_hidden, state_is_tuple=True)
     lstm_cell_o = tf.nn.rnn_cell.DropoutWrapper(lstm_cell_o, input_keep_prob=FLAGS.keep_prob,
@@ -160,7 +149,7 @@ def main(_):
     # ------check Arguments------
     if FLAGS.dt_dir == "":
         FLAGS.dt_dir = (date.today() + timedelta(-1)).strftime('%Y%m%d')
-    FLAGS.model_dir = FLAGS.model_dir + FLAGS.dt_dir + "R"
+    FLAGS.model_dir = FLAGS.model_dir + '20210111' + "R"
 
     print('task_type ', FLAGS.task_type)
     print('model_dir ', FLAGS.model_dir)
@@ -180,9 +169,9 @@ def main(_):
     print('l2_reg ', FLAGS.l2_reg)
     print('ctr_task_wgt ', FLAGS.ctr_task_wgt)
 
-    tr_files = glob.glob("%s/train/remap_sample/r*.txt" % FLAGS.data_dir)
+    tr_files = glob.glob("%s/train/*.txt" % FLAGS.data_dir)
     print("train_files:", tr_files)
-    te_files = glob.glob("%s/test/remap_sample/r*.txt" % FLAGS.data_dir)
+    te_files = glob.glob("%s/test/*.txt" % FLAGS.data_dir)
     print("test_files:", te_files)
 
     if FLAGS.clear_existing_model:
@@ -202,25 +191,19 @@ def main(_):
             if not FLAGS.clear_existing_model:
                 saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel'))
             for tr in tr_files:
-                tr_len = tr + '.pkl'
-                with open(tr_len, 'rb') as len_f:
-                    tr_len_list = list(pickle.load(len_f))
                 for i in range(FLAGS.num_epochs):
                     step = 0
                     tr_infile = open(tr, 'r')
                     best_auc = 0
                     while True:
                         step += 1
-                        total_data_id, total_data_value, total_click, total_label, total_seqlen = loadAliBatch(
-                            FLAGS.seq_max_len, tr_infile,
-                            tr_len_list[(step - 1) * FLAGS.batch_size:step * FLAGS.batch_size])
-                        if not total_label:
-                            break
+                        total_data, total_click_label, total_label, total_seqlen = loadCriteoBatch(
+                            FLAGS.batch_size, FLAGS.seq_max_len, tr_infile)
+                        # print(total_data, total_click_label, total_label, total_seqlen)
                         feed_dict = {
-                            input_id: sparse_tuple_from(total_data_id),
-                            input_value: sparse_tuple_from(total_data_value, dtype=np.float32),
+                            input: total_data,
                             seq_len: total_seqlen,
-                            click_label: total_click,
+                            click_label: total_click_label,
                             conversion_label: total_label
                         }
                         _, batch_loss, batch_cvr_loss, batch_click_loss, batch_eval = sess.run(
@@ -234,7 +217,7 @@ def main(_):
                         print("CVR_positive_ACC = " + "{}".format(batch_eval['CVR_positive_ACC'][0]), end='\t')
                         print("CVR_negative_ACC = " + "{}".format(batch_eval['CVR_negative_ACC'][0]))
                         print("Loss = " + "{}".format(batch_loss), end='\t')
-                        print("Clk Loss = " + "{}".format(batch_click_loss), end='\t')
+                        print("Clk_Loss = " + "{}".format(batch_click_loss), end='\t')
                         print("Cov_Loss = " + "{}".format(batch_cvr_loss))
                         if step % 50 == 0:
                             saver.save(sess, os.path.join(FLAGS.model_dir, 'MyModel'), global_step=step)
@@ -251,22 +234,16 @@ def main(_):
                             test_step = 0
                             for te in te_files:
                                 te_infile = open(te, 'r')
-                                te_len = te + '.pkl'
-                                with open(te_len, 'rb') as len_f:
-                                    te_len_list = list(pickle.load(len_f))
                                 for _ in range(10):
                                     test_step += 1
-                                    total_data_id, total_data_value, total_click, total_label, total_seqlen = loadAliBatch(
-                                        FLAGS.seq_max_len, te_infile,
-                                        te_len_list[(test_step - 1) * FLAGS.batch_size:test_step * FLAGS.batch_size])
-                                    if not total_seqlen:
-                                        break
+                                    test_total_data, test_total_click_label, test_total_label, test_total_seqlen = loadCriteoBatch(
+                                        FLAGS.batch_size, FLAGS.seq_max_len, te_infile)
+                                    print(test_total_seqlen)
                                     feed_dict = {
-                                        input_id: sparse_tuple_from(total_data_id),
-                                        input_value: sparse_tuple_from(total_data_value, dtype=np.float32),
-                                        seq_len: total_seqlen,
-                                        click_label: total_click,
-                                        conversion_label: total_label
+                                        input: test_total_data,
+                                        seq_len: test_total_seqlen,
+                                        click_label: test_total_click_label,
+                                        conversion_label: test_total_label
                                     }
                                     batch_loss, batch_cvr_loss, batch_click_loss, batch_eval = sess.run(
                                         [loss, conversion_loss, click_loss, eval_metric_ops],
@@ -305,8 +282,8 @@ def main(_):
                             if test_cvr_auc > best_auc:
                                 print("Save----------------")
                                 saver.save(sess, os.path.join(FLAGS.model_dir, 'BestModel'), global_step=step)
-                            if len(total_label) != FLAGS.batch_size:
-                                break
+                        if len(total_label) != FLAGS.batch_size:
+                            break
                     tr_infile.close()
     if FLAGS.task_type == 'eval':
         with tf.Session(config=config) as sess:
@@ -315,23 +292,15 @@ def main(_):
             for te in te_files:
                 print(te)
                 te_infile = open(te, 'r')
-                te_len = te + '.pkl'
-                with open(te_len, 'rb') as len_f:
-                    te_len_list = list(pickle.load(len_f))
                 step = 0
                 while True:
                     step += 1
-                    total_data_id, total_data_value, total_click, total_label, total_seqlen = loadAliBatch(
-                        FLAGS.seq_max_len, te_infile,
-                        te_len_list[(step - 1) * FLAGS.batch_size:step * FLAGS.batch_size])
-                    if not total_seqlen:
-                        break
-                    # print(total_click)
+                    total_data, total_click_label, total_label, total_seqlen = loadCriteoBatch(
+                        FLAGS.batch_size, FLAGS.seq_max_len, te_infile)
                     feed_dict = {
-                        input_id: sparse_tuple_from(total_data_id),
-                        input_value: sparse_tuple_from(total_data_value, dtype=np.float32),
+                        input: total_data,
                         seq_len: total_seqlen,
-                        click_label: total_click,
+                        click_label: total_click_label,
                         conversion_label: total_label
                     }
                     batch_loss, batch_cvr_loss, batch_click_loss, batch_eval = sess.run(
@@ -347,6 +316,60 @@ def main(_):
                     print("Cov_Loss = " + "{}".format(batch_cvr_loss))
                     if len(total_label) != FLAGS.batch_size:
                         break
+    if FLAGS.task_type == 'infer':
+        with tf.Session(config=config) as sess:
+            sess.run(tf.local_variables_initializer())
+            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-9300'))
+            for te in te_files:
+                print(te)
+                te_infile = open(te, 'r')
+                step = 0
+                pctr = np.array([])
+                y = np.array([])
+                pctcvr = np.array([])
+                z = np.array([])
+                while True:
+                    step += 1
+                    total_data, total_click_label, total_label, total_seqlen = loadCriteoBatch(
+                        FLAGS.batch_size, FLAGS.seq_max_len, te_infile)
+                    print(step)
+                    feed_dict = {
+                        input: total_data,
+                        seq_len: total_seqlen,
+                        click_label: total_click_label,
+                        conversion_label: total_label
+                    }
+                    p_click, l_click, p_conver, l_conver = sess.run(
+                        [reshape_click_pred, reshape_click_label, reshape_conversion_pred,
+                         reshape_conversion_label], feed_dict=feed_dict)
+                    pctr = np.append(pctr, p_click)
+                    y = np.append(y, l_click)
+                    pctcvr = np.append(pctcvr, p_conver)
+                    z = np.append(z, l_conver)
+                    if len(total_data) != FLAGS.batch_size:
+                        break
+                click_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
+                conversion_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
+                click_result['loss'] = utils.evaluate_logloss(pctr, y)
+                click_result['acc'] = utils.evaluate_acc(pctr, y)
+                click_result['auc'] = utils.evaluate_auc(pctr, y)
+                click_result['f1'] = utils.evaluate_f1_score(pctr, y)
+                click_result['ndcg'] = utils.evaluate_ndcg(None, pctr, y, len(pctr))
+                click_result['map'] = utils.evaluate_map(len(pctr), pctr, y, len(pctr))
+
+                conversion_result['loss'] = utils.evaluate_logloss(pctcvr, z)
+                conversion_result['acc'] = utils.evaluate_acc(pctcvr, z)
+                conversion_result['auc'] = utils.evaluate_auc(pctcvr, z)
+                conversion_result['f1'] = utils.evaluate_f1_score(pctcvr, z)
+                conversion_result['ndcg'] = utils.evaluate_ndcg(None, pctcvr, z, len(pctcvr))
+                conversion_result['map'] = utils.evaluate_map(len(pctcvr), pctcvr, z, len(pctcvr))
+                print("Click Result")
+                for k, v in click_result.items():
+                    print("{}:{}".format(k, v), end='\t')
+                print()
+                print("Conversion Result")
+                for k, v in conversion_result.items():
+                    print("{}:{}".format(k, v), end='\t')
 
 
 if __name__ == "__main__":

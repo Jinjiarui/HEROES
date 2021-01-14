@@ -2,11 +2,14 @@ import glob
 import os
 import pickle
 import shutil
+import sys
 from datetime import timedelta, date
 
 import numpy as np
 import tensorflow as tf
 
+sys.path.append("../")
+from utils import utils
 from load_alicpp import loadAliBatch
 
 FLAGS = tf.flags.FLAGS
@@ -160,7 +163,7 @@ def main(_):
     # ------check Arguments------
     if FLAGS.dt_dir == "":
         FLAGS.dt_dir = (date.today() + timedelta(-1)).strftime('%Y%m%d')
-    FLAGS.model_dir = FLAGS.model_dir + FLAGS.dt_dir + "R"
+    FLAGS.model_dir = FLAGS.model_dir + '20210107' + "R"
 
     print('task_type ', FLAGS.task_type)
     print('model_dir ', FLAGS.model_dir)
@@ -200,7 +203,7 @@ def main(_):
             sess.run(tf.global_variables_initializer())
             sess.run(tf.local_variables_initializer())
             if not FLAGS.clear_existing_model:
-                saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel'))
+                saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-100'))
             for tr in tr_files:
                 tr_len = tr + '.pkl'
                 with open(tr_len, 'rb') as len_f:
@@ -223,6 +226,7 @@ def main(_):
                             click_label: total_click,
                             conversion_label: total_label
                         }
+                        print(sess.run(tf.gather(reshape_click_pred, click_one), feed_dict=feed_dict))
                         _, batch_loss, batch_cvr_loss, batch_click_loss, batch_eval = sess.run(
                             [train_op, loss, conversion_loss, click_loss, eval_metric_ops],
                             feed_dict=feed_dict)
@@ -347,6 +351,65 @@ def main(_):
                     print("Cov_Loss = " + "{}".format(batch_cvr_loss))
                     if len(total_label) != FLAGS.batch_size:
                         break
+    if FLAGS.task_type == 'infer':
+        with tf.Session(config=config) as sess:
+            sess.run(tf.local_variables_initializer())
+            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-150'))
+            for te in te_files:
+                print(te)
+                te_infile = open(te, 'r')
+                te_len = te + '.pkl'
+                with open(te_len, 'rb') as len_f:
+                    te_len_list = list(pickle.load(len_f))
+                step = 0
+                pctr = np.array([])
+                y = np.array([])
+                pctcvr = np.array([])
+                z = np.array([])
+                while True:
+                    step += 1
+                    total_data_id, total_data_value, total_click, total_label, total_seqlen = loadAliBatch(
+                        FLAGS.seq_max_len, te_infile,
+                        te_len_list[(step - 1) * FLAGS.batch_size:step * FLAGS.batch_size])
+                    print(step)
+                    if not total_seqlen:
+                        break
+                    feed_dict = {
+                        input_id: sparse_tuple_from(total_data_id),
+                        input_value: sparse_tuple_from(total_data_value, dtype=np.float32),
+                        seq_len: total_seqlen,
+                        click_label: total_click,
+                        conversion_label: total_label
+                    }
+                    p_click, l_click, p_conver, l_conver = sess.run(
+                        [reshape_click_pred, reshape_click_label, reshape_conversion_pred,
+                         reshape_conversion_label], feed_dict=feed_dict)
+                    pctr = np.append(pctr, p_click)
+                    y = np.append(y, l_click)
+                    pctcvr = np.append(pctcvr, p_conver)
+                    z = np.append(z, l_conver)
+                click_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
+                conversion_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
+                click_result['loss'] = utils.evaluate_logloss(pctr, y)
+                click_result['acc'] = utils.evaluate_acc(pctr, y)
+                click_result['auc'] = utils.evaluate_auc(pctr, y)
+                click_result['f1'] = utils.evaluate_f1_score(pctr, y)
+                click_result['ndcg'] = utils.evaluate_ndcg(None, pctr, y, len(pctr))
+                click_result['map'] = utils.evaluate_map(len(pctr), pctr, y, len(pctr))
+
+                conversion_result['loss'] = utils.evaluate_logloss(pctcvr, z)
+                conversion_result['acc'] = utils.evaluate_acc(pctcvr, z)
+                conversion_result['auc'] = utils.evaluate_auc(pctcvr, z)
+                conversion_result['f1'] = utils.evaluate_f1_score(pctcvr, z)
+                conversion_result['ndcg'] = utils.evaluate_ndcg(None, pctcvr, z, len(pctcvr))
+                conversion_result['map'] = utils.evaluate_map(len(pctcvr), pctcvr, z, len(pctcvr))
+                print("Click Result")
+                for k, v in click_result.items():
+                    print("{}:{}".format(k, v), end='\t')
+                print()
+                print("Conversion Result")
+                for k, v in conversion_result.items():
+                    print("{}:{}".format(k, v), end='\t')
 
 
 if __name__ == "__main__":
