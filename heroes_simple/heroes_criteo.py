@@ -9,17 +9,16 @@ import tensorflow as tf
 
 sys.path.append("../")
 from utils import utils
-
 from load_criteo import loadCriteoBatch
 
 FLAGS = tf.flags.FLAGS
 tf.flags.DEFINE_integer("num_threads", 64, "Number of threads")
 tf.flags.DEFINE_integer("max_features", 5897, "Number of max_features")
-tf.flags.DEFINE_integer("embedding_size", 96, "Embedding size")
-tf.flags.DEFINE_integer("seq_max_len", 160, "seq_max_len")
+tf.flags.DEFINE_integer("embedding_size", 48, "Embedding size")
+tf.flags.DEFINE_integer("seq_max_len", 50, "seq_max_len")
 tf.flags.DEFINE_integer("num_epochs", 100, "Number of epochs")
-tf.flags.DEFINE_integer("batch_size", 50, "Number of batch size")
-tf.flags.DEFINE_float("learning_rate", 1e-3, "learning rate")
+tf.flags.DEFINE_integer("batch_size", 100, "Number of batch size")
+tf.flags.DEFINE_float("learning_rate", 1e-2, "learning rate")
 tf.flags.DEFINE_float("l2_reg", 0.01, "L2 regularization")
 tf.flags.DEFINE_string("loss_type", 'log_loss', "loss type {square_loss, log_loss}")
 tf.flags.DEFINE_float("ctr_task_wgt", 0.5, "loss weight of ctr task")
@@ -32,7 +31,7 @@ tf.flags.DEFINE_boolean("batch_norm", True, "perform batch normaization (True or
 tf.flags.DEFINE_float("batch_norm_decay", 0.9, "decay for the moving average(recommend trying decay=0.9)")
 tf.flags.DEFINE_string("data_dir", './../Criteo', "data dir")
 tf.flags.DEFINE_string("dt_dir", '', "data dt partition")
-tf.flags.DEFINE_string("model_dir", './../Criteo/model_Criteo_dnn', "model check point dir")
+tf.flags.DEFINE_string("model_dir", './../Criteo/model_Criteo_Heroes', "model check point dir")
 tf.flags.DEFINE_string("servable_model_dir", '', "export servable model for TensorFlow Serving")
 tf.flags.DEFINE_string("task_type", 'train', "task type {train, infer, eval}")
 tf.flags.DEFINE_boolean("clear_existing_model", False, "clear existing model or not")
@@ -44,100 +43,106 @@ input = tf.placeholder(tf.float32,
 seq_len = tf.placeholder(tf.int32, shape=[None], name='seqlen')
 click_label = tf.placeholder(tf.float32, shape=[None, FLAGS.seq_max_len, FLAGS.n_classes], name='clicks')
 conversion_label = tf.placeholder(tf.float32, shape=[None, FLAGS.seq_max_len, FLAGS.n_classes], name='labels')
+
 embedding_size = FLAGS.embedding_size
 l2_reg = FLAGS.l2_reg
 learning_rate = FLAGS.learning_rate
 max_features = FLAGS.max_features
 seq_max_len = FLAGS.seq_max_len
 ctr_task_wgt = FLAGS.ctr_task_wgt
-embedding_matrix = tf.Variable(
-    tf.random_normal([max_features, embedding_size], stddev=0.1))
-print(input.shape)
-n_hidden = FLAGS.n_hidden
-n_classes = FLAGS.n_classes
+
+position_embedding = tf.Variable(tf.random_normal([seq_max_len, embedding_size], stddev=0.1))
+position_copy = tf.tile(position_embedding, [tf.shape(click_label)[0], 1])  # (bs*seq,embed)
+embedding_matrix = tf.Variable(tf.random_normal([max_features, embedding_size], stddev=0.1))
 x1, x2 = tf.split(input, [1, 10], 2)
 x2 = tf.to_int32(x2)
 x2 = tf.nn.embedding_lookup(embedding_matrix, x2)
-x2 = tf.reshape(x2, [-1, seq_max_len, 10 * embedding_size])
-x = tf.concat((x1, x2), axis=2)
-print(x.shape)
-with tf.name_scope('P_o'), tf.variable_scope('P_o', reuse=tf.AUTO_REUSE):
-    lstm_cell_o = tf.contrib.rnn.BasicLSTMCell(FLAGS.n_hidden, state_is_tuple=True)
-    lstm_cell_o = tf.nn.rnn_cell.DropoutWrapper(lstm_cell_o, input_keep_prob=FLAGS.keep_prob,
-                                                output_keep_prob=FLAGS.keep_prob)
-    states_o, last_o = tf.nn.dynamic_rnn(cell=lstm_cell_o, inputs=x, sequence_length=seq_len, dtype=tf.float32)
+x2 = tf.reshape(x2, [-1, 10 * embedding_size])  # (bs*seq,10*embed)
+inputs = tf.concat((tf.reshape(x1, [-1, 1]), x2), axis=-1)  # (bs*seq,10*embed+1)
+inputs = tf.concat([inputs, position_copy], axis=-1)  # (bs*seq,11*embed+1)
+inputs = tf.reshape(inputs, (seq_max_len, -1, inputs.shape[-1]))  # (seq,bs,11*embed+1)
 
-with tf.name_scope('P_r'), tf.variable_scope('P_r', reuse=tf.AUTO_REUSE):
-    lstm_cell_r = tf.contrib.rnn.BasicLSTMCell(FLAGS.n_hidden, state_is_tuple=True)
-    lstm_cell_r = tf.nn.rnn_cell.DropoutWrapper(lstm_cell_r, input_keep_prob=FLAGS.keep_prob,
-                                                output_keep_prob=FLAGS.keep_prob)
-    states_r, last_r = tf.nn.dynamic_rnn(cell=lstm_cell_r, inputs=x, sequence_length=seq_len,
-                                         dtype=tf.float32)  # (bs,seq,hidden)
+with tf.name_scope('RNN'), tf.variable_scope("RNN", reuse=tf.AUTO_REUSE):
+    n_hidden = FLAGS.n_hidden
+    n_classes = FLAGS.n_classes
+    H_c = tf.random_normal(shape=(tf.shape(inputs)[1], n_hidden))  # (bs,hidden)
+    H_v = tf.random_normal(shape=(tf.shape(inputs)[1], n_hidden))  # (bs,hidden)
+    s_c = tf.random_normal(shape=(tf.shape(inputs)[1], n_hidden))  # (bs,hidden)
+    s_v = tf.random_normal(shape=(tf.shape(inputs)[1], n_hidden))  # (bs,hidden)
+    prediction_c = []
+    prediction_v = []
+    g = tf.where(tf.sigmoid(tf.layers.dense(H_c, units=n_classes, name='H_c_p')) >= 0.5,
+                 tf.ones(shape=(tf.shape(H_c)[0], n_classes)),
+                 tf.zeros(shape=(tf.shape(H_c)[0], n_classes)))  # (bs,1)
+    pc = tf.ones_like(g)  # The product of 1-H_c
+    pv = tf.ones_like(g)  # The product of 1-H_v
+    g = tf.tile(g, [1, n_hidden])  # (bs,hidden)
+    click_transpose = tf.transpose(click_label, [1, 0, 2])  # (seq,bs,n_class)
+    mode = FLAGS.task_type
+    for i in range(seq_max_len):
+        f_c = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xfc')
+                         + tf.layers.dense(H_c, units=n_hidden, use_bias=True, name='hfc'))
+        i_c = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xic')
+                         + tf.layers.dense(H_c, units=n_hidden, use_bias=True, name='hic'))
+        o_c = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xoc')
+                         + tf.layers.dense(H_c, units=n_hidden, use_bias=True, name='hoc'))
+        g_c = tf.tanh(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xgc')
+                      + tf.layers.dense(H_c, units=n_hidden, use_bias=True, name='hgc'))
+        s_c_hat = tf.multiply(1 - g, tf.layers.dense(H_c, units=n_hidden, name='s_c_hat_c')) \
+                  + tf.multiply(g, tf.layers.dense(H_v, units=n_hidden, name='s_c_hat_v'))
+        s_c = s_c_hat + tf.multiply(i_c, g_c) + tf.multiply(1 - g, tf.multiply(f_c, s_c))
+        H_c = tf.multiply(o_c, tf.tanh(s_c))
 
-with tf.name_scope('P_c'), tf.variable_scope('P_c', reuse=tf.AUTO_REUSE):
-    x_c = tf.multiply(states_o, states_r)
-    W_c = tf.get_variable('W_c', [n_hidden, n_classes], initializer=tf.truncated_normal_initializer(stddev=0.1))
-    b_c = tf.get_variable('b_c', [n_classes], initializer=tf.truncated_normal_initializer(stddev=0.1))
-    x_c = tf.nn.xw_plus_b(x_c, W_c, b_c)  # (bs,seq,n_classes)
-    P_c = tf.nn.sigmoid(x_c)
+        H_c_p = tf.sigmoid(tf.layers.dense(H_c, units=n_classes, name='H_c_p'))  # (bs,1)
+        prediction_c.append(H_c_p)
+        if mode == 'train':
+            g = tf.where(click_transpose[i] >= 0.5, tf.ones_like(click_transpose[i]), tf.zeros_like(click_transpose[i]))
+            pc = tf.where(click_transpose[i] >= 0.5, tf.ones_like(prediction_c[-1]), tf.multiply(1 - H_c_p, pc))
+        else:
+            g = tf.where(prediction_c[-1] >= 0.5, tf.ones_like(prediction_c[-1]), tf.zeros_like(prediction_c[-1]))
+            pc = tf.where(prediction_c[-1] >= 0.5, tf.ones_like(prediction_c[-1]), tf.multiply(1 - H_c_p, pc))
+        g = tf.tile(g, [1, n_hidden])
+        f_v = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xfv')
+                         + tf.layers.dense(H_v, units=n_hidden, use_bias=True, name='hfv'))
+        i_v = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xiv')
+                         + tf.layers.dense(H_v, units=n_hidden, use_bias=True, name='hiv'))
+        o_v = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xov')
+                         + tf.layers.dense(H_v, units=n_hidden, use_bias=True, name='hov'))
+        g_v = tf.tanh(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xgv')
+                      + tf.layers.dense(H_v, units=n_hidden, use_bias=True, name='hgv'))
+        s_v_hat = tf.layers.dense(H_v, units=n_hidden, name='s_v_hat_v') \
+                  + g * tf.layers.dense(H_c, units=n_hidden, name='s_v_hat_c')
+        s_v = s_v_hat + tf.multiply(1 - g, s_v) + tf.multiply(g, tf.multiply(f_v, s_v) + tf.multiply(i_v, g_v))
+        H_v = tf.multiply(1 - g, H_v) + tf.multiply(g, tf.multiply(o_v, tf.tanh(s_v)))
+        H_v_p = tf.sigmoid(tf.layers.dense(H_v, units=n_classes, name='H_v_p'))  # (bs,1)
+        prediction_v.append(tf.multiply(H_v_p, prediction_c[-1]))
+        # pv = tf.where(prediction_v[-1] > 0.5, tf.ones_like(prediction_v[-1]), tf.multiply(1 - H_v_p, pv))
 
-with tf.name_scope('P_a'), tf.variable_scope('P_a', reuse=tf.AUTO_REUSE):
-    lstm_cell_a = tf.contrib.rnn.BasicLSTMCell(FLAGS.n_hidden, state_is_tuple=True)
-    lstm_cell_a = tf.nn.rnn_cell.DropoutWrapper(lstm_cell_a, input_keep_prob=FLAGS.keep_prob,
-                                                output_keep_prob=FLAGS.keep_prob)
-    states_a, last_a = tf.nn.dynamic_rnn(cell=lstm_cell_a, inputs=states_r, sequence_length=seq_len,
-                                         dtype=tf.float32)  # (bs,seq,hidden)
-    W_a = tf.get_variable('W_a', [n_hidden, n_classes], initializer=tf.truncated_normal_initializer(stddev=0.1))
-    b_a = tf.get_variable('b_a', [n_classes], initializer=tf.truncated_normal_initializer(stddev=0.1))
-    x_a = tf.nn.xw_plus_b(states_a, W_a, b_a)  # (bs,seq,n_classes)
-
-with tf.name_scope('P_v'):
-    x_v = tf.multiply(x_c, x_a)
-    P_v = tf.nn.sigmoid(x_v)
-
-# ------bulid loss------
 mask = tf.sequence_mask(seq_len, seq_max_len)
-conversion_loss = tf.reduce_mean(
-    tf.boolean_mask(tf.nn.sigmoid_cross_entropy_with_logits(labels=conversion_label, logits=x_v), mask))
-click_loss = tf.reduce_mean(
-    tf.boolean_mask(tf.nn.sigmoid_cross_entropy_with_logits(labels=click_label, logits=x_c), mask))
+prediction_c = tf.boolean_mask(tf.transpose(tf.stack(prediction_c), [1, 0, 2]), mask)
+prediction_v = tf.boolean_mask(tf.transpose(tf.stack(prediction_v), [1, 0, 2]), mask)
+reshape_click_label = tf.boolean_mask(click_label, mask)
+reshape_conversion_label = tf.boolean_mask(conversion_label, mask)
+click_loss = tf.reduce_mean(tf.losses.log_loss(labels=reshape_click_label, predictions=prediction_c))
+conversion_loss = tf.reduce_mean(tf.losses.log_loss(labels=reshape_conversion_label, predictions=prediction_v))
 loss = (1 - ctr_task_wgt) * click_loss + ctr_task_wgt * conversion_loss
-
 for v in tf.trainable_variables():
     loss += l2_reg * tf.nn.l2_loss(v)
+tf.summary.scalar('ctr_loss', click_loss)
+tf.summary.scalar('ctcvr_loss', conversion_loss)
+
 threshold = 0.5
-reshape_click_label = tf.squeeze(tf.boolean_mask(click_label, mask))
-reshape_click_pred = tf.squeeze(tf.boolean_mask(P_c, mask))
-
-click_zero = tf.where(reshape_click_label < 0.5)
-click_one = tf.where(reshape_click_label > 0.5)
-
-reshape_conversion_label = tf.squeeze(tf.boolean_mask(conversion_label, mask))
-reshape_conversion_pred = tf.squeeze(tf.boolean_mask(P_v, mask))
-conversion_zero = tf.where(reshape_conversion_label < 0.5)
-conversion_one = tf.where(reshape_conversion_label > 0.5)
-
+one_click = tf.ones_like(reshape_click_label)
+zero_click = tf.zeros_like(reshape_click_label)
+one_cvr = tf.ones_like(reshape_conversion_label)
+zero_cvr = tf.zeros_like(reshape_conversion_label)
 eval_metric_ops = {
-    "CTR_AUC": tf.metrics.auc(reshape_click_label, reshape_click_pred),
-    "CTR_positive_ACC": tf.metrics.accuracy(tf.gather(reshape_click_label, click_one),
-                                            tf.where(tf.gather(reshape_click_pred, click_one) >= threshold,
-                                                     tf.ones(shape=(tf.shape(click_one))),
-                                                     tf.zeros(shape=tf.shape(click_one)))),
-    "CTR_negative_ACC": tf.metrics.accuracy(tf.gather(reshape_click_label, click_zero),
-                                            tf.where(tf.gather(reshape_click_pred, click_zero) >= threshold,
-                                                     tf.ones(shape=tf.shape(click_zero)),
-                                                     tf.zeros(shape=tf.shape(click_zero)))),
-    "CVR_AUC": tf.metrics.auc(reshape_conversion_label, reshape_conversion_pred),
-    "CVR_positive_ACC": tf.metrics.accuracy(tf.gather(reshape_conversion_label, conversion_one),
-                                            tf.where(tf.gather(reshape_conversion_pred, conversion_one) >= threshold,
-                                                     tf.ones(shape=tf.shape(conversion_one)),
-                                                     tf.zeros(shape=tf.shape(conversion_one)))),
-    "CVR_negative_ACC": tf.metrics.accuracy(tf.gather(reshape_conversion_label, conversion_zero),
-                                            tf.where(tf.gather(reshape_conversion_pred, conversion_zero) >= threshold,
-                                                     tf.ones(shape=tf.shape(conversion_zero)),
-                                                     tf.zeros(shape=tf.shape(conversion_zero))))
+    "CTR_AUC": tf.metrics.auc(reshape_click_label, prediction_c),
+    "CTR_ACC": tf.metrics.accuracy(reshape_click_label,
+                                   tf.where(prediction_c >= threshold, one_click, zero_click)),
+    "CTCVR_AUC": tf.metrics.auc(reshape_conversion_label, prediction_v),
+    "CTCVR_ACC": tf.metrics.accuracy(reshape_conversion_label, tf.where(prediction_v >= threshold, one_cvr, zero_cvr))
 }
-
 global_step = tf.Variable(0, trainable=False)
 cov_learning_rate = tf.train.exponential_decay(learning_rate, global_step, 50000, 0.96)
 optimizer = tf.train.AdamOptimizer(learning_rate=cov_learning_rate)
@@ -149,7 +154,7 @@ def main(_):
     # ------check Arguments------
     if FLAGS.dt_dir == "":
         FLAGS.dt_dir = (date.today() + timedelta(-1)).strftime('%Y%m%d')
-    FLAGS.model_dir = FLAGS.model_dir + '20210111' + "R"
+    FLAGS.model_dir = FLAGS.model_dir + FLAGS.dt_dir + "R"
 
     print('task_type ', FLAGS.task_type)
     print('model_dir ', FLAGS.model_dir)
@@ -189,7 +194,7 @@ def main(_):
             sess.run(tf.global_variables_initializer())
             sess.run(tf.local_variables_initializer())
             if not FLAGS.clear_existing_model:
-                saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel'))
+                saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-500'))
             for tr in tr_files:
                 for i in range(FLAGS.num_epochs):
                     step = 0
@@ -199,35 +204,37 @@ def main(_):
                         step += 1
                         total_data, total_click_label, total_label, total_seqlen = loadCriteoBatch(
                             FLAGS.batch_size, FLAGS.seq_max_len, tr_infile)
-                        # print(total_data, total_click_label, total_label, total_seqlen)
                         feed_dict = {
                             input: total_data,
                             seq_len: total_seqlen,
                             click_label: total_click_label,
                             conversion_label: total_label
                         }
-                        _, batch_loss, batch_cvr_loss, batch_click_loss, batch_eval = sess.run(
-                            [train_op, loss, conversion_loss, click_loss, eval_metric_ops],
+                        batch_c_label, batch_c, _, batch_loss, batch_cvr_loss, batch_click_loss, batch_eval = sess.run(
+                            [reshape_click_label, prediction_c, train_op, loss, conversion_loss, click_loss,
+                             eval_metric_ops],
                             feed_dict=feed_dict)
+                        print(np.sum(batch_c_label))
+                        print(np.sum(batch_c >= 0.5))
+                        print(utils.evaluate_acc(label=batch_c_label, pred=batch_c))
+                        print(utils.evaluate_acc(label=batch_c_label,pred=np.zeros_like(batch_c_label)))
                         print("Epoch:{}\tStep:{}".format(i, step))
-                        print("CTR_AUC = " + "{}".format(batch_eval['CTR_AUC'][0]), end='\t')
-                        print("CVR_AUC = " + "{}".format(batch_eval['CVR_AUC'][0]), end='\t')
-                        print("CTR_positive_ACC = " + "{}".format(batch_eval['CTR_positive_ACC'][0]), end='\t')
-                        print("CTR_negative_ACC = " + "{}".format(batch_eval['CTR_negative_ACC'][0]), end='\t')
-                        print("CVR_positive_ACC = " + "{}".format(batch_eval['CVR_positive_ACC'][0]), end='\t')
-                        print("CVR_negative_ACC = " + "{}".format(batch_eval['CVR_negative_ACC'][0]))
+                        print("click_AUC = " + "{}".format(batch_eval['CTR_AUC'][0]), end='\t')
+                        print("conversion_AUC = " + "{}".format(batch_eval['CTCVR_AUC'][0]), end='\t')
+                        print("click_ACC = " + "{}".format(batch_eval['CTR_ACC'][0]), end='\t')
+                        print("conversion_ACC = " + "{}".format(batch_eval['CTCVR_ACC'][0]))
                         print("Loss = " + "{}".format(batch_loss), end='\t')
-                        print("Clk_Loss = " + "{}".format(batch_click_loss), end='\t')
+                        print("Clk Loss = " + "{}".format(batch_click_loss), end='\t')
                         print("Cov_Loss = " + "{}".format(batch_cvr_loss))
-                        if step % 50 == 0:
+                        if len(total_label) != FLAGS.batch_size:
+                            break
+                        if step % 500 == 0:
                             saver.save(sess, os.path.join(FLAGS.model_dir, 'MyModel'), global_step=step)
                             print("Test----------------")
                             test_cvr_auc = 0.0
                             test_ctr_auc = 0.0
-                            test_cvr_negative_acc = 0.0
-                            test_ctr_positive_acc = 0.0
-                            test_ctr_negative_acc = 0.0
-                            test_cvr_positive_acc = 0.0
+                            test_cvr_acc = 0.0
+                            test_ctr_acc = 0.0
                             test_loss = 0
                             test_clk_loss = 0
                             test_cvr_loss = 0
@@ -238,7 +245,6 @@ def main(_):
                                     test_step += 1
                                     test_total_data, test_total_click_label, test_total_label, test_total_seqlen = loadCriteoBatch(
                                         FLAGS.batch_size, FLAGS.seq_max_len, te_infile)
-                                    print(test_total_seqlen)
                                     feed_dict = {
                                         input: test_total_data,
                                         seq_len: test_total_seqlen,
@@ -249,11 +255,9 @@ def main(_):
                                         [loss, conversion_loss, click_loss, eval_metric_ops],
                                         feed_dict=feed_dict)
                                     test_ctr_auc += batch_eval['CTR_AUC'][0]
-                                    test_cvr_auc += batch_eval['CVR_AUC'][0]
-                                    test_ctr_positive_acc += batch_eval['CTR_positive_ACC'][0]
-                                    test_ctr_negative_acc += batch_eval['CTR_negative_ACC'][0]
-                                    test_cvr_negative_acc += batch_eval['CVR_negative_ACC'][0]
-                                    test_cvr_positive_acc += batch_eval['CVR_positive_ACC'][0]
+                                    test_cvr_auc += batch_eval['CTCVR_AUC'][0]
+                                    test_ctr_acc += batch_eval['CTR_ACC'][0]
+                                    test_cvr_acc += batch_eval['CTCVR_ACC'][0]
                                     test_loss += batch_loss
                                     test_cvr_loss += batch_cvr_loss
                                     test_clk_loss += batch_click_loss
@@ -262,28 +266,22 @@ def main(_):
                                 te_infile.close()
                             test_ctr_auc /= test_step
                             test_cvr_auc /= test_step
-                            test_cvr_positive_acc /= test_step
-                            test_cvr_negative_acc /= test_step
-                            test_ctr_positive_acc /= test_step
-                            test_ctr_negative_acc /= test_step
+                            test_cvr_acc /= test_step
+                            test_ctr_acc /= test_step
                             test_loss /= test_step
                             test_clk_loss /= test_step
                             test_cvr_loss /= step
 
                             print("click_AUC = " + "{}".format(test_ctr_auc), end='\t')
                             print("conversion_AUC = " + "{}".format(test_cvr_auc), end='\t')
-                            print("click_positive_ACC = " + "{}".format(test_ctr_positive_acc), end='\t')
-                            print("conversion_positive_ACC = " + "{}".format(test_cvr_positive_acc), end='\t')
-                            print("click_negative_ACC = " + "{}".format(test_ctr_negative_acc), end='\t')
-                            print("conversion_negative_ACC = " + "{}".format(test_cvr_negative_acc))
+                            print("click_ACC = " + "{}".format(test_ctr_acc), end='\t')
+                            print("conversion_ACC = " + "{}".format(test_cvr_acc))
                             print("Loss = " + "{}".format(test_loss), end='\t')
                             print("Clk Loss = " + "{}".format(test_clk_loss), end='\t')
                             print("Cov_Loss = " + "{}".format(test_cvr_loss))
                             if test_cvr_auc > best_auc:
                                 print("Save----------------")
                                 saver.save(sess, os.path.join(FLAGS.model_dir, 'BestModel'), global_step=step)
-                        if len(total_label) != FLAGS.batch_size:
-                            break
                     tr_infile.close()
     if FLAGS.task_type == 'eval':
         with tf.Session(config=config) as sess:
@@ -305,12 +303,10 @@ def main(_):
                     }
                     batch_loss, batch_cvr_loss, batch_click_loss, batch_eval = sess.run(
                         [loss, conversion_loss, click_loss, eval_metric_ops], feed_dict=feed_dict)
-                    print("CTR_AUC = " + "{}".format(batch_eval['CTR_AUC'][0]), end='\t')
-                    print("CVR_AUC = " + "{}".format(batch_eval['CVR_AUC'][0]), end='\t')
-                    print("CTR_positive_ACC = " + "{}".format(batch_eval['CTR_positive_ACC'][0]), end='\t')
-                    print("CTR_negative_ACC = " + "{}".format(batch_eval['CTR_negative_ACC'][0]), end='\t')
-                    print("CVR_positive_ACC = " + "{}".format(batch_eval['CVR_positive_ACC'][0]), end='\t')
-                    print("CVR_negative_ACC = " + "{}".format(batch_eval['CVR_negative_ACC'][0]))
+                    print("click_AUC = " + "{}".format(batch_eval['CTR_AUC'][0]), end='\t')
+                    print("conversion_AUC = " + "{}".format(batch_eval['CTCVR_AUC'][0]), end='\t')
+                    print("click_ACC = " + "{}".format(batch_eval['CTR_ACC'][0]), end='\t')
+                    print("conversion_ACC = " + "{}".format(batch_eval['CTCVR_ACC'][0]))
                     print("Loss = " + "{}".format(batch_loss), end='\t')
                     print("Clk Loss = " + "{}".format(batch_click_loss), end='\t')
                     print("Cov_Loss = " + "{}".format(batch_cvr_loss))
@@ -319,7 +315,7 @@ def main(_):
     if FLAGS.task_type == 'infer':
         with tf.Session(config=config) as sess:
             sess.run(tf.local_variables_initializer())
-            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-9300'))
+            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-150'))
             for te in te_files:
                 print(te)
                 te_infile = open(te, 'r')
@@ -332,21 +328,19 @@ def main(_):
                     step += 1
                     total_data, total_click_label, total_label, total_seqlen = loadCriteoBatch(
                         FLAGS.batch_size, FLAGS.seq_max_len, te_infile)
-                    print(step)
                     feed_dict = {
                         input: total_data,
                         seq_len: total_seqlen,
                         click_label: total_click_label,
                         conversion_label: total_label
                     }
-                    p_click, l_click, p_conver, l_conver = sess.run(
-                        [reshape_click_pred, reshape_click_label, reshape_conversion_pred,
-                         reshape_conversion_label], feed_dict=feed_dict)
+                    p_click, l_click, p_conver, l_conver = sess.run([prediction_c, reshape_click_label, prediction_v,
+                                                                     conversion_label], feed_dict=feed_dict)
                     pctr = np.append(pctr, p_click)
                     y = np.append(y, l_click)
                     pctcvr = np.append(pctcvr, p_conver)
                     z = np.append(z, l_conver)
-                    if len(total_data) != FLAGS.batch_size:
+                    if len(total_label) != FLAGS.batch_size:
                         break
                 click_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
                 conversion_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
