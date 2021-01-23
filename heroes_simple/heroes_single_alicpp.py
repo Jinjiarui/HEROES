@@ -26,7 +26,8 @@ tf.flags.DEFINE_float("ctr_task_wgt", 0.5, "loss weight of ctr task")
 tf.flags.DEFINE_string("optimizer", 'Adam', "optimizer type {Adam, Adagrad, GD, Momentum}")
 tf.flags.DEFINE_integer("n_hidden", 256, "deep layers")
 tf.flags.DEFINE_integer("n_classes", 1, "deep layers")
-tf.flags.DEFINE_float("keep_prob", 0.5, "dropout rate")
+tf.flags.DEFINE_string("deep_layers", '196,128,64', "deep layers")
+tf.flags.DEFINE_string("keep_prob", '0.5,0.5,0.5', "dropout rate")
 tf.flags.DEFINE_string("gpus", '0', "list of gpus")
 tf.flags.DEFINE_boolean("batch_norm", True, "perform batch normaization (True or False)")
 tf.flags.DEFINE_float("batch_norm_decay", 0.9, "decay for the moving average(recommend trying decay=0.9)")
@@ -66,66 +67,91 @@ learning_rate = FLAGS.learning_rate
 max_features = FLAGS.max_features
 seq_max_len = FLAGS.seq_max_len
 ctr_task_wgt = FLAGS.ctr_task_wgt
+layers = list(map(int, FLAGS.deep_layers.split(',')))
+dropout = list(map(float, FLAGS.keep_prob.split(',')))
 
 position_embedding = tf.Variable(tf.random_normal([seq_max_len, embedding_size], stddev=0.1))
 position_copy = tf.tile(position_embedding, [tf.shape(click_label)[0], 1])  # (bs*seq,embed)
 embedding_matrix = tf.Variable(tf.random_normal([max_features, embedding_size], stddev=0.1))
 inputs = tf.nn.embedding_lookup_sparse(embedding_matrix, sp_ids=input_id, sp_weights=input_value)  # (bs*seq,embed)
 inputs = tf.concat([inputs, position_copy], axis=-1)  # (bs*seq,2*embed)
-inputs = tf.reshape(inputs, (seq_max_len, -1, inputs.shape[-1]))  # (seq,bs,2*embed)
+inputs = tf.reshape(inputs, (-1, seq_max_len, inputs.shape[-1]))  # (bs,seq,2*embed)
+inputs = tf.transpose(inputs, [1, 0, 2])  # (seq,bs,embed)
+
+
+def batch_norm_layer(x, train_phase, scope_bn):
+    bn_train = tf.contrib.layers.batch_norm(x, decay=FLAGS.batch_norm_decay, center=True, scale=True,
+                                            updates_collections=None, is_training=True, reuse=None, scope=scope_bn)
+    bn_infer = tf.contrib.layers.batch_norm(x, decay=FLAGS.batch_norm_decay, center=True, scale=True,
+                                            updates_collections=None, is_training=False, reuse=True, scope=scope_bn)
+    z = tf.cond(tf.cast(train_phase, tf.bool), lambda: bn_train, lambda: bn_infer)
+    return z
+
+
+def fully_connected(x, basename, mode):
+    for i in range(len(layers)):
+        x = tf.layers.dense(inputs=x, units=layers[i], use_bias=True, reuse=tf.AUTO_REUSE, name='%s%d' % (basename, i))
+        x = tf.nn.relu(x)
+        if mode == 'train':
+            train_phase = True
+        else:
+            train_phase = False
+        if FLAGS.batch_norm:
+            x = batch_norm_layer(x, train_phase=train_phase, scope_bn='%s_bn_%d' % (basename, i))
+        if mode == 'train':
+            x = tf.nn.dropout(x, keep_prob=dropout[i])
+            # Apply Dropout after all BN layers and set dropout=0.8(drop_ratio=0.2)
+    return tf.sigmoid(tf.layers.dense(inputs=x, units=n_classes, reuse=tf.AUTO_REUSE, use_bias=True, name=basename))
+
 
 with tf.name_scope('RNN'), tf.variable_scope("RNN", reuse=tf.AUTO_REUSE):
     n_hidden = FLAGS.n_hidden
     n_classes = FLAGS.n_classes
-    H_c = tf.random_normal(shape=(tf.shape(inputs)[1], n_hidden))  # (bs,hidden)
-    H_v = tf.random_normal(shape=(tf.shape(inputs)[1], n_hidden))  # (bs,hidden)
-    s_c = tf.random_normal(shape=(tf.shape(inputs)[1], n_hidden))  # (bs,hidden)
-    s_v = tf.random_normal(shape=(tf.shape(inputs)[1], n_hidden))  # (bs,hidden)
+    H_c = tf.zeros(shape=(tf.shape(inputs)[1], n_hidden))  # (bs,hidden)
+    H_v = tf.zeros(shape=(tf.shape(inputs)[1], n_hidden))  # (bs,hidden)
+    s_c = tf.zeros(shape=(tf.shape(inputs)[1], n_hidden))  # (bs,hidden)
+    s_v = tf.zeros(shape=(tf.shape(inputs)[1], n_hidden))  # (bs,hidden)
     prediction_c = []
     prediction_v = []
-    g = tf.where(tf.sigmoid(tf.layers.dense(H_c, units=n_classes, name='H_c_p')) >= 0.5,
+    mode = FLAGS.task_type
+    '''g = tf.where(tf.sigmoid(tf.layers.dense(H_c, units=n_classes, name='H_c_p')) >= 0.5,
                  tf.ones(shape=(tf.shape(H_c)[0], n_classes)),
-                 tf.zeros(shape=(tf.shape(H_c)[0], n_classes)))  # (bs,1)
+                 tf.zeros(shape=(tf.shape(H_c)[0], n_classes)))  # (bs,1)'''
+    g = tf.sigmoid(tf.layers.dense(inputs=H_c, units=n_classes, reuse=tf.AUTO_REUSE, use_bias=True, name='H_c'))
     pc = tf.ones_like(g)  # The product of 1-H_c
     pv = tf.ones_like(g)  # The product of 1-H_v
     g = tf.tile(g, [1, n_hidden])  # (bs,hidden)
-    click_transpose = tf.transpose(click_label, [1, 0, 2])  # (seq,bs,n_class)
-    mode = FLAGS.task_type
     for i in range(seq_max_len):
-        f_c = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xfc')
-                         + tf.layers.dense(H_c, units=n_hidden, use_bias=True, name='hfc'))
-        i_c = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xic')
-                         + tf.layers.dense(H_c, units=n_hidden, use_bias=True, name='hic'))
-        o_c = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xoc')
-                         + tf.layers.dense(H_c, units=n_hidden, use_bias=True, name='hoc'))
-        g_c = tf.tanh(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xgc')
-                      + tf.layers.dense(H_c, units=n_hidden, use_bias=True, name='hgc'))
-        s_c_hat = tf.multiply(1 - g, tf.layers.dense(H_c, units=n_hidden, name='s_c_hat_c')) \
-                  + tf.multiply(g, tf.layers.dense(H_v, units=n_hidden, name='s_c_hat_v'))
+        f_c = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=True, name='xfc')
+                         + tf.layers.dense(H_c, units=n_hidden, use_bias=False, name='hfc'))
+        i_c = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=True, name='xic')
+                         + tf.layers.dense(H_c, units=n_hidden, use_bias=False, name='hic'))
+        o_c = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=True, name='xoc')
+                         + tf.layers.dense(H_c, units=n_hidden, use_bias=False, name='hoc'))
+        g_c = tf.tanh(tf.layers.dense(inputs[i], units=n_hidden, use_bias=True, name='xgc')
+                      + tf.layers.dense(H_c, units=n_hidden, use_bias=False, name='hgc'))
+        s_c_hat = tf.tanh(tf.multiply(1 - g, tf.layers.dense(H_c, units=n_hidden, use_bias=False, name='s_c_hat_c')) \
+                          + tf.multiply(g, tf.layers.dense(H_v, units=n_hidden, use_bias=False, name='s_c_hat_v')))
         s_c = s_c_hat + tf.multiply(i_c, g_c) + tf.multiply(1 - g, tf.multiply(f_c, s_c))
         H_c = tf.multiply(o_c, tf.tanh(s_c))
-
-        H_c_p = tf.sigmoid(tf.layers.dense(H_c, units=n_classes, name='H_c_p'))  # (bs,1)
-        prediction_c.append(tf.multiply(H_c_p, pc))
+        H_c_p = tf.sigmoid(tf.layers.dense(inputs=H_c, units=n_classes, reuse=tf.AUTO_REUSE, use_bias=True, name='H_c'))
+        prediction_c.append(H_c_p)
+        # g = tf.where(prediction_c[-1] >= 0.5, tf.ones_like(prediction_c[-1]), tf.zeros_like(prediction_c[-1]))
         pc = tf.where(prediction_c[-1] >= 0.5, tf.ones_like(prediction_c[-1]), tf.multiply(1 - H_c_p, pc))
-        if mode == 'train':
-            g = tf.where(click_transpose[i] >= 0.5, tf.ones_like(click_transpose[i]), tf.zeros_like(click_transpose[i]))
-        else:
-            g = tf.where(prediction_c[-1] >= 0.5, tf.ones_like(prediction_c[-1]), tf.zeros_like(prediction_c[-1]))
-        g = tf.tile(g, [1, n_hidden])
-        f_v = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xfv')
-                         + tf.layers.dense(H_v, units=n_hidden, use_bias=True, name='hfv'))
-        i_v = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xiv')
-                         + tf.layers.dense(H_v, units=n_hidden, use_bias=True, name='hiv'))
-        o_v = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xov')
-                         + tf.layers.dense(H_v, units=n_hidden, use_bias=True, name='hov'))
-        g_v = tf.tanh(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xgv')
-                      + tf.layers.dense(H_v, units=n_hidden, use_bias=True, name='hgv'))
-        s_v_hat = tf.layers.dense(H_v, units=n_hidden, name='s_v_hat_v') \
-                  + g * tf.layers.dense(H_c, units=n_hidden, name='s_v_hat_c')
+        g = tf.tile(H_c_p, [1, n_hidden])
+        f_v = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=True, name='xfv')
+                         + tf.layers.dense(H_v, units=n_hidden, use_bias=False, name='hfv'))
+        i_v = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=True, name='xiv')
+                         + tf.layers.dense(H_v, units=n_hidden, use_bias=False, name='hiv'))
+        o_v = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=True, name='xov')
+                         + tf.layers.dense(H_v, units=n_hidden, use_bias=False, name='hov'))
+        g_v = tf.tanh(tf.layers.dense(inputs[i], units=n_hidden, use_bias=True, name='xgv')
+                      + tf.layers.dense(H_v, units=n_hidden, use_bias=False, name='hgv'))
+        s_v_hat = tf.tanh(tf.layers.dense(H_v, units=n_hidden, use_bias=False, name='s_v_hat_v') \
+                          + g * tf.layers.dense(H_c, units=n_hidden, use_bias=False, name='s_v_hat_c'))
         s_v = s_v_hat + tf.multiply(1 - g, s_v) + tf.multiply(g, tf.multiply(f_v, s_v) + tf.multiply(i_v, g_v))
         H_v = tf.multiply(1 - g, H_v) + tf.multiply(g, tf.multiply(o_v, tf.tanh(s_v)))
-        H_v_p = tf.sigmoid(tf.layers.dense(H_v, units=n_classes, name='H_v_p'))  # (bs,1)
+        H_v_p = tf.sigmoid(tf.layers.dense(inputs=H_v, units=n_classes, reuse=tf.AUTO_REUSE, use_bias=True, name='H_v'))
         prediction_v.append(tf.multiply(H_v_p, pv))
         pv = tf.where(prediction_c[-1] > 0.5, tf.ones_like(prediction_v[-1]), tf.multiply(1 - H_v_p, pv))
 
@@ -134,8 +160,19 @@ prediction_c = tf.boolean_mask(tf.transpose(tf.stack(prediction_c), [1, 0, 2]), 
 prediction_v = tf.boolean_mask(tf.transpose(tf.stack(prediction_v), [1, 0, 2]), mask)
 reshape_click_label = tf.boolean_mask(click_label, mask)
 reshape_conversion_label = tf.boolean_mask(conversion_label, mask)
-click_loss = tf.reduce_mean(tf.losses.log_loss(labels=reshape_click_label, predictions=prediction_c))
-conversion_loss = tf.reduce_mean(tf.losses.log_loss(labels=reshape_conversion_label, predictions=prediction_v))
+epsilon = 1e-7
+click_num = tf.to_float(tf.count_nonzero(reshape_click_label))
+conversion_num = tf.to_float(tf.count_nonzero(reshape_conversion_label))
+click_weight = (tf.to_float(tf.size(reshape_click_label)) - click_num) / (click_num + epsilon)
+conversion_weight = (tf.to_float(tf.size(reshape_conversion_label)) - conversion_num) / (conversion_num + epsilon)
+'''click_loss = tf.reduce_mean(tf.losses.log_loss(labels=reshape_click_label, predictions=prediction_c))
+conversion_loss = tf.reduce_mean(tf.losses.log_loss(labels=reshape_conversion_label, predictions=prediction_v))'''
+click_loss = -click_weight * reshape_click_label * tf.log(prediction_c + epsilon) - \
+             (1 - reshape_click_label) * tf.log(1 - prediction_c + epsilon)
+click_loss = tf.reduce_mean(click_loss)
+conversion_loss = -conversion_weight * reshape_conversion_label * tf.log(prediction_v + epsilon) - \
+                  (1 - reshape_conversion_label) * tf.log(1 - prediction_v + epsilon)
+conversion_loss = tf.reduce_mean(conversion_loss)
 loss = (1 - ctr_task_wgt) * click_loss + ctr_task_wgt * conversion_loss
 for v in tf.trainable_variables():
     loss += l2_reg * tf.nn.l2_loss(v)
@@ -228,10 +265,14 @@ def main(_):
                             click_label: total_click,
                             conversion_label: total_label
                         }
-                        _, batch_loss, batch_cvr_loss, batch_click_loss, batch_eval = sess.run(
-                            [train_op, loss, conversion_loss, click_loss,
+                        batch_c_label, batch_c, _, batch_loss, batch_cvr_loss, batch_click_loss, batch_eval = sess.run(
+                            [reshape_click_label, prediction_c, train_op, loss, conversion_loss, click_loss,
                              eval_metric_ops],
                             feed_dict=feed_dict)
+                        print(np.sum(batch_c_label))
+                        print(np.sum(batch_c >= 0.5))
+                        print(utils.evaluate_acc(label=batch_c_label, pred=batch_c))
+                        print(utils.evaluate_auc(label=batch_c_label, pred=batch_c))
 
                         print("Epoch:{}\tStep:{}".format(i, step))
                         print("click_AUC = " + "{}".format(batch_eval['CTR_AUC'][0]), end='\t')
@@ -306,7 +347,7 @@ def main(_):
     if FLAGS.task_type == 'eval':
         with tf.Session(config=config) as sess:
             sess.run(tf.local_variables_initializer())
-            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel'))
+            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-150'))
             for te in te_files:
                 print(te)
                 te_infile = open(te, 'r')

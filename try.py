@@ -20,25 +20,8 @@ c_gate = tf.ones(shape=(3, 2, 128))
 c_tensor = tf.constant([[0.3, 0.4, 0.3],
                         [0.66, 0.14, 0.2]], dtype=tf.float32)
 H_c_p = tf.concat([b_tensor, tf.tile(b_test, [3, 1, 1])], axis=-1)
-
+c_copy = tf.tile(c_tensor, [3, 1])
 with tf.Session() as sess:
     print(a)
     print(sess.run(H_c_p))
-
-pred = np.array([[0.10936552],
-                 [0.08778351],
-                 [0.11339431],
-                 [0.31700978],
-                 [0.21651457],
-                 [0.05353596],
-                 [0.04739181],
-                 [0.0419528]])
-label = np.array([[0.],
-                  [0.],
-                  [1.],
-                  [0.],
-                  [0.],
-                  [0.],
-                  [0.],
-                  [0.]])
-print(utils.evaluate_auc(pred, label))
+    print(sess.run(c_copy))
