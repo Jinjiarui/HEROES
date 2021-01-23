@@ -91,6 +91,7 @@ def fully_connected(x, basename, mode):
     return tf.sigmoid(tf.layers.dense(inputs=x, units=n_classes, use_bias=True, name=basename))
 
 
+
 with tf.name_scope('RNN'), tf.variable_scope("RNN", reuse=tf.AUTO_REUSE):
     n_hidden = FLAGS.n_hidden
     n_classes = FLAGS.n_classes
@@ -354,7 +355,7 @@ def main(_):
     if FLAGS.task_type == 'infer':
         with tf.Session(config=config) as sess:
             sess.run(tf.local_variables_initializer())
-            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-150'))
+            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-2500'))
             for te in te_files:
                 print(te)
                 te_infile = open(te, 'r')
@@ -374,7 +375,7 @@ def main(_):
                         conversion_label: total_label
                     }
                     p_click, l_click, p_conver, l_conver = sess.run([prediction_c, reshape_click_label, prediction_v,
-                                                                     conversion_label], feed_dict=feed_dict)
+                                                                     reshape_conversion_label], feed_dict=feed_dict)
                     pctr = np.append(pctr, p_click)
                     y = np.append(y, l_click)
                     pctcvr = np.append(pctcvr, p_conver)
