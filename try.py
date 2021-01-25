@@ -1,9 +1,9 @@
 import glob
 import os
+import pickle
 
 import numpy as np
 import tensorflow as tf
-from utils import utils
 
 os.environ['CUDA_VISIBLE_DEVICES'] = ''
 tr_files = glob.glob("Criteo/t*/*.txt")
@@ -25,3 +25,12 @@ with tf.Session() as sess:
     print(a)
     print(sess.run(H_c_p))
     print(sess.run(c_copy))
+
+tr_files = glob.glob("%s/train/remap_sample/r*.txt" % 'alicpp')
+print("train_files:", tr_files)
+for tr in tr_files:
+    tr_len = tr + '.pkl'
+    with open(tr_len, 'rb') as len_f:
+        tr_len_list = list(pickle.load(len_f))
+    for i in [1, 10, 50, 100, 120, 130, 150, 160]:
+        print(i, np.sum(list(map(lambda x: x >= i, tr_len_list))))

@@ -72,59 +72,60 @@ position_copy = tf.tile(position_embedding, [tf.shape(click_label)[0], 1])  # (b
 embedding_matrix = tf.Variable(tf.random_normal([max_features, embedding_size], stddev=0.1))
 inputs = tf.nn.embedding_lookup_sparse(embedding_matrix, sp_ids=input_id, sp_weights=input_value)  # (bs*seq,embed)
 inputs = tf.concat([inputs, position_copy], axis=-1)  # (bs*seq,2*embed)
-inputs = tf.reshape(inputs, (seq_max_len, -1, inputs.shape[-1]))  # (seq,bs,2*embed)
+inputs = tf.reshape(inputs, (-1, seq_max_len, inputs.shape[-1]))  # (bs,seq,2*embed)
+inputs = tf.transpose(inputs, [1, 0, 2])  # (seq,bs,embed)
 
 with tf.name_scope('RNN'), tf.variable_scope("RNN", reuse=tf.AUTO_REUSE):
     n_hidden = FLAGS.n_hidden
     n_classes = FLAGS.n_classes
-    H_c = tf.random_normal(shape=(tf.shape(inputs)[1], n_hidden))  # (bs,hidden)
-    H_v = tf.random_normal(shape=(tf.shape(inputs)[1], n_hidden))  # (bs,hidden)
-    s_c = tf.random_normal(shape=(tf.shape(inputs)[1], n_hidden))  # (bs,hidden)
-    s_v = tf.random_normal(shape=(tf.shape(inputs)[1], n_hidden))  # (bs,hidden)
+    H_c = tf.zeros(shape=(tf.shape(inputs)[1], n_hidden))  # (bs,hidden)
+    H_v = tf.zeros(shape=(tf.shape(inputs)[1], n_hidden))  # (bs,hidden)
+    s_c = tf.zeros(shape=(tf.shape(inputs)[1], n_hidden))  # (bs,hidden)
+    s_v = tf.zeros(shape=(tf.shape(inputs)[1], n_hidden))  # (bs,hidden)
     prediction_c = []
     prediction_v = []
-    g = tf.where(tf.sigmoid(tf.layers.dense(H_c, units=n_classes, name='H_c_p')) >= 0.5,
+    mode = FLAGS.task_type
+    '''g = tf.where(tf.sigmoid(tf.layers.dense(H_c, units=n_classes, name='H_c_p')) >= 0.5,
                  tf.ones(shape=(tf.shape(H_c)[0], n_classes)),
-                 tf.zeros(shape=(tf.shape(H_c)[0], n_classes)))  # (bs,1)
+                 tf.zeros(shape=(tf.shape(H_c)[0], n_classes)))  # (bs,1)'''
+    g = tf.sigmoid(tf.layers.dense(inputs=H_c, units=n_classes, reuse=tf.AUTO_REUSE, use_bias=True, name='H_c'))
     pc = tf.ones_like(g)  # The product of 1-H_c
     pv = tf.ones_like(g)  # The product of 1-H_v
     g = tf.tile(g, [1, n_hidden])  # (bs,hidden)
-
     for i in range(seq_max_len):
-        f_c = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xfc')
-                         + tf.layers.dense(H_c, units=n_hidden, use_bias=True, name='hfc'))
-        i_c = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xic')
-                         + tf.layers.dense(H_c, units=n_hidden, use_bias=True, name='hic'))
-        o_c = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xoc')
-                         + tf.layers.dense(H_c, units=n_hidden, use_bias=True, name='hoc'))
-        g_c = tf.tanh(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xgc')
-                      + tf.layers.dense(H_c, units=n_hidden, use_bias=True, name='hgc'))
-        s_c_hat = tf.multiply(1 - g, tf.layers.dense(H_c, units=n_hidden, name='s_c_hat_c')) \
-                  + tf.multiply(g, tf.layers.dense(H_v, units=n_hidden, name='s_c_hat_v'))
+        f_c = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=True, name='xfc')
+                         + tf.layers.dense(H_c, units=n_hidden, use_bias=False, name='hfc'))
+        i_c = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=True, name='xic')
+                         + tf.layers.dense(H_c, units=n_hidden, use_bias=False, name='hic'))
+        o_c = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=True, name='xoc')
+                         + tf.layers.dense(H_c, units=n_hidden, use_bias=False, name='hoc'))
+        g_c = tf.tanh(tf.layers.dense(inputs[i], units=n_hidden, use_bias=True, name='xgc')
+                      + tf.layers.dense(H_c, units=n_hidden, use_bias=False, name='hgc'))
+        s_c_hat = tf.tanh(tf.multiply(1 - g, tf.layers.dense(H_c, units=n_hidden, use_bias=False, name='s_c_hat_c')) \
+                          + tf.multiply(g, tf.layers.dense(H_v, units=n_hidden, use_bias=False, name='s_c_hat_v')))
         s_c = s_c_hat + tf.multiply(i_c, g_c) + tf.multiply(1 - g, tf.multiply(f_c, s_c))
         H_c = tf.multiply(o_c, tf.tanh(s_c))
-
-        H_c_p = tf.sigmoid(tf.layers.dense(H_c, units=n_classes, name='H_c_p'))  # (bs,1)
-        prediction_c.append(tf.multiply(H_c_p, pc))
+        H_c_p = tf.sigmoid(tf.layers.dense(inputs=H_c, units=n_classes, reuse=tf.AUTO_REUSE, use_bias=True, name='H_c'))
+        prediction_c.append(H_c_p)
+        # g = tf.where(prediction_c[-1] >= 0.5, tf.ones_like(prediction_c[-1]), tf.zeros_like(prediction_c[-1]))
         pc = tf.where(prediction_c[-1] >= 0.5, tf.ones_like(prediction_c[-1]), tf.multiply(1 - H_c_p, pc))
-        g = tf.where(prediction_c[-1] >= 0.5, tf.ones_like(prediction_c[-1]), tf.zeros_like(prediction_c[-1]))
-        g = tf.tile(g, [1, n_hidden])
-        f_v = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xfv')
-                         + tf.layers.dense(H_v, units=n_hidden, use_bias=True, name='hfv'))
-        i_v = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xiv')
-                         + tf.layers.dense(H_v, units=n_hidden, use_bias=True, name='hiv'))
-        o_v = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xov')
-                         + tf.layers.dense(H_v, units=n_hidden, use_bias=True, name='hov'))
-        g_v = tf.tanh(tf.layers.dense(inputs[i], units=n_hidden, use_bias=False, name='xgv')
-                      + tf.layers.dense(H_v, units=n_hidden, use_bias=True, name='hgv'))
-        s_v_hat = tf.layers.dense(H_v, units=n_hidden, name='s_v_hat_v') \
-                  + g * tf.layers.dense(H_c, units=n_hidden, name='s_v_hat_c')
+        g = tf.tile(H_c_p, [1, n_hidden])
+        f_v = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=True, name='xfv')
+                         + tf.layers.dense(H_v, units=n_hidden, use_bias=False, name='hfv'))
+        i_v = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=True, name='xiv')
+                         + tf.layers.dense(H_v, units=n_hidden, use_bias=False, name='hiv'))
+        o_v = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=True, name='xov')
+                         + tf.layers.dense(H_v, units=n_hidden, use_bias=False, name='hov'))
+        g_v = tf.tanh(tf.layers.dense(inputs[i], units=n_hidden, use_bias=True, name='xgv')
+                      + tf.layers.dense(H_v, units=n_hidden, use_bias=False, name='hgv'))
+        s_v_hat = tf.tanh(tf.layers.dense(H_v, units=n_hidden, use_bias=False, name='s_v_hat_v') \
+                          + g * tf.layers.dense(H_c, units=n_hidden, use_bias=False, name='s_v_hat_c'))
         s_v = s_v_hat + tf.multiply(1 - g, s_v) + tf.multiply(g, tf.multiply(f_v, s_v) + tf.multiply(i_v, g_v))
         H_v = tf.multiply(1 - g, H_v) + tf.multiply(g, tf.multiply(o_v, tf.tanh(s_v)))
-        H_v_p = tf.sigmoid(tf.layers.dense(H_v, units=n_classes, name='H_v_p'))  # (bs,1)
+
+        H_v_p = tf.sigmoid(tf.layers.dense(inputs=H_v, units=n_classes, reuse=tf.AUTO_REUSE, use_bias=True, name='H_v'))
         prediction_v.append(tf.multiply(H_v_p, pv))
         pv = tf.where(prediction_c[-1] > 0.5, tf.ones_like(prediction_v[-1]), tf.multiply(1 - H_v_p, pv))
-
 
 mask = tf.sequence_mask(seq_len, seq_max_len)
 prediction_c = tf.boolean_mask(tf.transpose(tf.stack(prediction_c), [1, 0, 2]), mask)
@@ -133,7 +134,7 @@ reshape_click_label = tf.boolean_mask(click_label, mask)
 reshape_conversion_label = tf.boolean_mask(conversion_label, mask)
 click_loss = tf.reduce_mean(tf.losses.log_loss(labels=reshape_click_label, predictions=prediction_c))
 conversion_loss = tf.reduce_mean(tf.losses.log_loss(labels=reshape_conversion_label, predictions=prediction_v))
-loss = (1 - ctr_task_wgt) * click_loss + ctr_task_wgt * conversion_loss
+loss = ((1 - ctr_task_wgt) * click_loss + ctr_task_wgt * conversion_loss) * 100
 for v in tf.trainable_variables():
     loss += l2_reg * tf.nn.l2_loss(v)
 tf.summary.scalar('ctr_loss', click_loss)

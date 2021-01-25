@@ -16,9 +16,9 @@ FLAGS = tf.flags.FLAGS
 tf.flags.DEFINE_integer("num_threads", 64, "Number of threads")
 tf.flags.DEFINE_integer("max_features", 5897, "Number of max_features")
 tf.flags.DEFINE_integer("embedding_size", 96, "Embedding size")
-tf.flags.DEFINE_integer("seq_max_len", 160, "seq_max_len")
+tf.flags.DEFINE_integer("seq_max_len", 50, "seq_max_len")
 tf.flags.DEFINE_integer("num_epochs", 100, "Number of epochs")
-tf.flags.DEFINE_integer("batch_size", 50, "Number of batch size")
+tf.flags.DEFINE_integer("batch_size", 100, "Number of batch size")
 tf.flags.DEFINE_float("learning_rate", 1e-3, "learning rate")
 tf.flags.DEFINE_float("l2_reg", 0.01, "L2 regularization")
 tf.flags.DEFINE_string("loss_type", 'log_loss', "loss type {square_loss, log_loss}")
@@ -149,7 +149,7 @@ def main(_):
     # ------check Arguments------
     if FLAGS.dt_dir == "":
         FLAGS.dt_dir = (date.today() + timedelta(-1)).strftime('%Y%m%d')
-    FLAGS.model_dir = FLAGS.model_dir + '20210111' + "R"
+    FLAGS.model_dir = FLAGS.model_dir + FLAGS.dt_dir + "R"
 
     print('task_type ', FLAGS.task_type)
     print('model_dir ', FLAGS.model_dir)
@@ -219,7 +219,9 @@ def main(_):
                         print("Loss = " + "{}".format(batch_loss), end='\t')
                         print("Clk_Loss = " + "{}".format(batch_click_loss), end='\t')
                         print("Cov_Loss = " + "{}".format(batch_cvr_loss))
-                        if step % 50 == 0:
+                        if len(total_label) != FLAGS.batch_size:
+                            break
+                        if step % 500 == 0:
                             saver.save(sess, os.path.join(FLAGS.model_dir, 'MyModel'), global_step=step)
                             print("Test----------------")
                             test_cvr_auc = 0.0
@@ -238,7 +240,6 @@ def main(_):
                                     test_step += 1
                                     test_total_data, test_total_click_label, test_total_label, test_total_seqlen = loadCriteoBatch(
                                         FLAGS.batch_size, FLAGS.seq_max_len, te_infile)
-                                    print(test_total_seqlen)
                                     feed_dict = {
                                         input: test_total_data,
                                         seq_len: test_total_seqlen,
@@ -282,8 +283,6 @@ def main(_):
                             if test_cvr_auc > best_auc:
                                 print("Save----------------")
                                 saver.save(sess, os.path.join(FLAGS.model_dir, 'BestModel'), global_step=step)
-                        if len(total_label) != FLAGS.batch_size:
-                            break
                     tr_infile.close()
     if FLAGS.task_type == 'eval':
         with tf.Session(config=config) as sess:
@@ -348,6 +347,10 @@ def main(_):
                     z = np.append(z, l_conver)
                     if len(total_data) != FLAGS.batch_size:
                         break
+                pctr=np.squeeze(pctr)
+                y=np.squeeze(y)
+                pctcvr=np.squeeze(pctcvr)
+                z=np.squeeze(z)
                 click_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
                 conversion_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
                 click_result['loss'] = utils.evaluate_logloss(pctr, y)
@@ -355,21 +358,37 @@ def main(_):
                 click_result['auc'] = utils.evaluate_auc(pctr, y)
                 click_result['f1'] = utils.evaluate_f1_score(pctr, y)
                 click_result['ndcg'] = utils.evaluate_ndcg(None, pctr, y, len(pctr))
+                click_result['ndcg1'] = utils.evaluate_ndcg(1, pctr, y, len(pctr))
+                click_result['ndcg3'] = utils.evaluate_ndcg(3, pctr, y, len(pctr))
+                click_result['ndcg5'] = utils.evaluate_ndcg(5, pctr, y, len(pctr))
+                click_result['ndcg10'] = utils.evaluate_ndcg(10, pctr, y, len(pctr))
                 click_result['map'] = utils.evaluate_map(len(pctr), pctr, y, len(pctr))
+                click_result['map1'] = utils.evaluate_map(1, pctr, y, len(pctr))
+                click_result['map3'] = utils.evaluate_map(3, pctr, y, len(pctr))
+                click_result['map5'] = utils.evaluate_map(5, pctr, y, len(pctr))
+                click_result['map10'] = utils.evaluate_map(10, pctr, y, len(pctr))
 
                 conversion_result['loss'] = utils.evaluate_logloss(pctcvr, z)
                 conversion_result['acc'] = utils.evaluate_acc(pctcvr, z)
                 conversion_result['auc'] = utils.evaluate_auc(pctcvr, z)
                 conversion_result['f1'] = utils.evaluate_f1_score(pctcvr, z)
                 conversion_result['ndcg'] = utils.evaluate_ndcg(None, pctcvr, z, len(pctcvr))
+                conversion_result['ndcg1'] = utils.evaluate_ndcg(1, pctcvr, z, len(pctcvr))
+                conversion_result['ndcg3'] = utils.evaluate_ndcg(3, pctcvr, z, len(pctcvr))
+                conversion_result['ndcg5'] = utils.evaluate_ndcg(5, pctcvr, z, len(pctcvr))
+                conversion_result['ndcg10'] = utils.evaluate_ndcg(10, pctcvr, z, len(pctcvr))
                 conversion_result['map'] = utils.evaluate_map(len(pctcvr), pctcvr, z, len(pctcvr))
+                conversion_result['map1'] = utils.evaluate_map(1, pctcvr, z, len(pctcvr))
+                conversion_result['map3'] = utils.evaluate_map(3, pctcvr, z, len(pctcvr))
+                conversion_result['map5'] = utils.evaluate_map(5, pctcvr, z, len(pctcvr))
+                conversion_result['map10'] = utils.evaluate_map(10, pctcvr, z, len(pctcvr))
                 print("Click Result")
                 for k, v in click_result.items():
-                    print("{}:{}".format(k, v), end='\t')
+                    print("{}:{}".format(k, v))
                 print()
                 print("Conversion Result")
                 for k, v in conversion_result.items():
-                    print("{}:{}".format(k, v), end='\t')
+                    print("{}:{}".format(k, v))
 
 
 if __name__ == "__main__":

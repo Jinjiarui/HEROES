@@ -91,7 +91,6 @@ def fully_connected(x, basename, mode):
     return tf.sigmoid(tf.layers.dense(inputs=x, units=n_classes, use_bias=True, name=basename))
 
 
-
 with tf.name_scope('RNN'), tf.variable_scope("RNN", reuse=tf.AUTO_REUSE):
     n_hidden = FLAGS.n_hidden
     n_classes = FLAGS.n_classes
@@ -105,11 +104,10 @@ with tf.name_scope('RNN'), tf.variable_scope("RNN", reuse=tf.AUTO_REUSE):
     '''g = tf.where(tf.sigmoid(tf.layers.dense(H_c, units=n_classes, name='H_c_p')) >= 0.5,
                  tf.ones(shape=(tf.shape(H_c)[0], n_classes)),
                  tf.zeros(shape=(tf.shape(H_c)[0], n_classes)))  # (bs,1)'''
-    g =  tf.sigmoid(tf.layers.dense(inputs=H_c, units=n_classes, reuse=tf.AUTO_REUSE, use_bias=True, name='H_c'))
+    g = tf.sigmoid(tf.layers.dense(inputs=H_c, units=n_classes, reuse=tf.AUTO_REUSE, use_bias=True, name='H_c'))
     pc = tf.ones_like(g)  # The product of 1-H_c
     pv = tf.ones_like(g)  # The product of 1-H_v
     g = tf.tile(g, [1, n_hidden])  # (bs,hidden)
-
     for i in range(seq_max_len):
         f_c = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=True, name='xfc')
                          + tf.layers.dense(H_c, units=n_hidden, use_bias=False, name='hfc'))
@@ -123,7 +121,7 @@ with tf.name_scope('RNN'), tf.variable_scope("RNN", reuse=tf.AUTO_REUSE):
                           + tf.multiply(g, tf.layers.dense(H_v, units=n_hidden, use_bias=False, name='s_c_hat_v')))
         s_c = s_c_hat + tf.multiply(i_c, g_c) + tf.multiply(1 - g, tf.multiply(f_c, s_c))
         H_c = tf.multiply(o_c, tf.tanh(s_c))
-        H_c_p =  tf.sigmoid(tf.layers.dense(inputs=H_c, units=n_classes, reuse=tf.AUTO_REUSE, use_bias=True, name='H_c'))
+        H_c_p = tf.sigmoid(tf.layers.dense(inputs=H_c, units=n_classes, reuse=tf.AUTO_REUSE, use_bias=True, name='H_c'))
         prediction_c.append(H_c_p)
         # g = tf.where(prediction_c[-1] >= 0.5, tf.ones_like(prediction_c[-1]), tf.zeros_like(prediction_c[-1]))
         pc = tf.where(prediction_c[-1] >= 0.5, tf.ones_like(prediction_c[-1]), tf.multiply(1 - H_c_p, pc))
@@ -153,17 +151,17 @@ reshape_conversion_label = tf.boolean_mask(conversion_label, mask)
 epsilon = 1e-7
 click_num = tf.to_float(tf.count_nonzero(reshape_click_label))
 conversion_num = tf.to_float(tf.count_nonzero(reshape_conversion_label))
-click_weight = (tf.to_float(tf.size(reshape_click_label)) - click_num) / (click_num + epsilon)
-conversion_weight = (tf.to_float(tf.size(reshape_conversion_label)) - conversion_num) / (conversion_num + epsilon)
-'''click_loss = tf.reduce_mean(tf.losses.log_loss(labels=reshape_click_label, predictions=prediction_c))
-conversion_loss = tf.reduce_mean(tf.losses.log_loss(labels=reshape_conversion_label, predictions=prediction_v))'''
-click_loss = -click_weight * reshape_click_label * tf.log(prediction_c + epsilon) - \
-             (1 - reshape_click_label) * tf.log(1 - prediction_c + epsilon)
+click_weight = (click_num + 1) / (tf.to_float(tf.size(reshape_click_label)) + 2)
+conversion_weight = (conversion_num + 1) / (tf.to_float(tf.size(reshape_conversion_label)) + 2)
+click_loss = tf.reduce_mean(tf.losses.log_loss(labels=reshape_click_label, predictions=prediction_c))
+conversion_loss = tf.reduce_mean(tf.losses.log_loss(labels=reshape_conversion_label, predictions=prediction_v))
+'''click_loss = -(1 - click_weight) * reshape_click_label * tf.log(prediction_c + epsilon) - \
+             click_weight * (1 - reshape_click_label) * tf.log(1 - prediction_c + epsilon)
 click_loss = tf.reduce_mean(click_loss)
-conversion_loss = -conversion_weight * reshape_conversion_label * tf.log(prediction_v + epsilon) - \
-                  (1 - reshape_conversion_label) * tf.log(1 - prediction_v + epsilon)
-conversion_loss = tf.reduce_mean(conversion_loss)
-loss = (1 - ctr_task_wgt) * click_loss + ctr_task_wgt * conversion_loss
+conversion_loss = -(1 - conversion_weight) * reshape_conversion_label * tf.log(prediction_v + epsilon) - \
+                  conversion_weight * (1 - reshape_conversion_label) * tf.log(1 - prediction_v + epsilon)
+conversion_loss = tf.reduce_mean(conversion_loss)'''
+loss = ((1 - ctr_task_wgt) * click_loss + ctr_task_wgt * conversion_loss) * 100
 for v in tf.trainable_variables():
     loss += l2_reg * tf.nn.l2_loss(v)
 tf.summary.scalar('ctr_loss', click_loss)
@@ -192,7 +190,7 @@ def main(_):
     # ------check Arguments------
     if FLAGS.dt_dir == "":
         FLAGS.dt_dir = (date.today() + timedelta(-1)).strftime('%Y%m%d')
-    FLAGS.model_dir = FLAGS.model_dir + FLAGS.dt_dir + "R"
+    FLAGS.model_dir = FLAGS.model_dir + FLAGS.dt_dir + "P"
 
     print('task_type ', FLAGS.task_type)
     print('model_dir ', FLAGS.model_dir)
@@ -256,6 +254,7 @@ def main(_):
                             feed_dict=feed_dict)
                         print(np.sum(batch_c_label), np.sum(batch_c >= 0.5))
                         print(utils.evaluate_acc(label=batch_c_label, pred=batch_c),
+                              utils.evaluate_auc(label=batch_c_label, pred=batch_c),
                               utils.evaluate_acc(label=batch_c_label, pred=np.zeros_like(batch_c_label)))
                         print(batch_c_weight, batch_v_weight)
                         print("Epoch:{}\tStep:{}".format(i, step))
@@ -355,7 +354,7 @@ def main(_):
     if FLAGS.task_type == 'infer':
         with tf.Session(config=config) as sess:
             sess.run(tf.local_variables_initializer())
-            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-2500'))
+            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-4000'))
             for te in te_files:
                 print(te)
                 te_infile = open(te, 'r')
@@ -382,6 +381,7 @@ def main(_):
                     z = np.append(z, l_conver)
                     if len(total_label) != FLAGS.batch_size:
                         break
+                print(pctr.shape)
                 click_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
                 conversion_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
                 click_result['loss'] = utils.evaluate_logloss(pctr, y)
@@ -389,21 +389,37 @@ def main(_):
                 click_result['auc'] = utils.evaluate_auc(pctr, y)
                 click_result['f1'] = utils.evaluate_f1_score(pctr, y)
                 click_result['ndcg'] = utils.evaluate_ndcg(None, pctr, y, len(pctr))
+                click_result['ndcg1'] = utils.evaluate_ndcg(1, pctr, y, len(pctr))
+                click_result['ndcg3'] = utils.evaluate_ndcg(3, pctr, y, len(pctr))
+                click_result['ndcg5'] = utils.evaluate_ndcg(5, pctr, y, len(pctr))
+                click_result['ndcg10'] = utils.evaluate_ndcg(10, pctr, y, len(pctr))
                 click_result['map'] = utils.evaluate_map(len(pctr), pctr, y, len(pctr))
+                click_result['map1'] = utils.evaluate_map(1, pctr, y, len(pctr))
+                click_result['map3'] = utils.evaluate_map(3, pctr, y, len(pctr))
+                click_result['map5'] = utils.evaluate_map(5, pctr, y, len(pctr))
+                click_result['map10'] = utils.evaluate_map(10, pctr, y, len(pctr))
 
                 conversion_result['loss'] = utils.evaluate_logloss(pctcvr, z)
                 conversion_result['acc'] = utils.evaluate_acc(pctcvr, z)
                 conversion_result['auc'] = utils.evaluate_auc(pctcvr, z)
                 conversion_result['f1'] = utils.evaluate_f1_score(pctcvr, z)
                 conversion_result['ndcg'] = utils.evaluate_ndcg(None, pctcvr, z, len(pctcvr))
+                conversion_result['ndcg1'] = utils.evaluate_ndcg(1, pctcvr, z, len(pctcvr))
+                conversion_result['ndcg3'] = utils.evaluate_ndcg(3, pctcvr, z, len(pctcvr))
+                conversion_result['ndcg5'] = utils.evaluate_ndcg(5, pctcvr, z, len(pctcvr))
+                conversion_result['ndcg10'] = utils.evaluate_ndcg(10, pctcvr, z, len(pctcvr))
                 conversion_result['map'] = utils.evaluate_map(len(pctcvr), pctcvr, z, len(pctcvr))
+                conversion_result['map1'] = utils.evaluate_map(1, pctcvr, z, len(pctcvr))
+                conversion_result['map3'] = utils.evaluate_map(3, pctcvr, z, len(pctcvr))
+                conversion_result['map5'] = utils.evaluate_map(5, pctcvr, z, len(pctcvr))
+                conversion_result['map10'] = utils.evaluate_map(10, pctcvr, z, len(pctcvr))
                 print("Click Result")
                 for k, v in click_result.items():
-                    print("{}:{}".format(k, v), end='\t')
+                    print("{}:{}".format(k, v))
                 print()
                 print("Conversion Result")
                 for k, v in conversion_result.items():
-                    print("{}:{}".format(k, v), end='\t')
+                    print("{}:{}".format(k, v))
 
 
 if __name__ == "__main__":

@@ -71,9 +71,8 @@ n_classes = FLAGS.n_classes
 embedding_matrix = tf.Variable(
     tf.random_normal([max_features, embedding_size], stddev=0.1))
 
-input = tf.nn.embedding_lookup_sparse(embedding_matrix, sp_ids=input_id, sp_weights=input_value)  # (bs*seq,embed)
-input = tf.reshape(input, (-1, seq_max_len, input.shape[-1]))  # (bs,seq,embed)
-x = tf.concat((input, click_label), axis=2)
+x = tf.nn.embedding_lookup_sparse(embedding_matrix, sp_ids=input_id, sp_weights=input_value)  # (bs*seq,embed)
+x = tf.reshape(x, (-1, seq_max_len, x.shape[-1]))  # (bs,seq,embed)
 
 with tf.name_scope('P_o'), tf.variable_scope('P_o', reuse=tf.AUTO_REUSE):
     lstm_cell_o = tf.contrib.rnn.BasicLSTMCell(FLAGS.n_hidden, state_is_tuple=True)
@@ -163,7 +162,7 @@ def main(_):
     # ------check Arguments------
     if FLAGS.dt_dir == "":
         FLAGS.dt_dir = (date.today() + timedelta(-1)).strftime('%Y%m%d')
-    FLAGS.model_dir = FLAGS.model_dir + '20210107' + "R"
+    FLAGS.model_dir = FLAGS.model_dir + FLAGS.dt_dir + "R"
 
     print('task_type ', FLAGS.task_type)
     print('model_dir ', FLAGS.model_dir)
@@ -226,7 +225,6 @@ def main(_):
                             click_label: total_click,
                             conversion_label: total_label
                         }
-                        print(sess.run(tf.gather(reshape_click_pred, click_one), feed_dict=feed_dict))
                         _, batch_loss, batch_cvr_loss, batch_click_loss, batch_eval = sess.run(
                             [train_op, loss, conversion_loss, click_loss, eval_metric_ops],
                             feed_dict=feed_dict)
@@ -354,7 +352,7 @@ def main(_):
     if FLAGS.task_type == 'infer':
         with tf.Session(config=config) as sess:
             sess.run(tf.local_variables_initializer())
-            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-150'))
+            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-100'))
             for te in te_files:
                 print(te)
                 te_infile = open(te, 'r')
@@ -388,6 +386,10 @@ def main(_):
                     y = np.append(y, l_click)
                     pctcvr = np.append(pctcvr, p_conver)
                     z = np.append(z, l_conver)
+                pctr=np.squeeze(pctr)
+                y=np.squeeze(y)
+                pctcvr=np.squeeze(pctcvr)
+                z=np.squeeze(z)
                 click_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
                 conversion_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
                 click_result['loss'] = utils.evaluate_logloss(pctr, y)
@@ -395,21 +397,37 @@ def main(_):
                 click_result['auc'] = utils.evaluate_auc(pctr, y)
                 click_result['f1'] = utils.evaluate_f1_score(pctr, y)
                 click_result['ndcg'] = utils.evaluate_ndcg(None, pctr, y, len(pctr))
+                click_result['ndcg1'] = utils.evaluate_ndcg(1, pctr, y, len(pctr))
+                click_result['ndcg3'] = utils.evaluate_ndcg(3, pctr, y, len(pctr))
+                click_result['ndcg5'] = utils.evaluate_ndcg(5, pctr, y, len(pctr))
+                click_result['ndcg10'] = utils.evaluate_ndcg(10, pctr, y, len(pctr))
                 click_result['map'] = utils.evaluate_map(len(pctr), pctr, y, len(pctr))
+                click_result['map1'] = utils.evaluate_map(1, pctr, y, len(pctr))
+                click_result['map3'] = utils.evaluate_map(3, pctr, y, len(pctr))
+                click_result['map5'] = utils.evaluate_map(5, pctr, y, len(pctr))
+                click_result['map10'] = utils.evaluate_map(10, pctr, y, len(pctr))
 
                 conversion_result['loss'] = utils.evaluate_logloss(pctcvr, z)
                 conversion_result['acc'] = utils.evaluate_acc(pctcvr, z)
                 conversion_result['auc'] = utils.evaluate_auc(pctcvr, z)
                 conversion_result['f1'] = utils.evaluate_f1_score(pctcvr, z)
                 conversion_result['ndcg'] = utils.evaluate_ndcg(None, pctcvr, z, len(pctcvr))
+                conversion_result['ndcg1'] = utils.evaluate_ndcg(1, pctcvr, z, len(pctcvr))
+                conversion_result['ndcg3'] = utils.evaluate_ndcg(3, pctcvr, z, len(pctcvr))
+                conversion_result['ndcg5'] = utils.evaluate_ndcg(5, pctcvr, z, len(pctcvr))
+                conversion_result['ndcg10'] = utils.evaluate_ndcg(10, pctcvr, z, len(pctcvr))
                 conversion_result['map'] = utils.evaluate_map(len(pctcvr), pctcvr, z, len(pctcvr))
+                conversion_result['map1'] = utils.evaluate_map(1, pctcvr, z, len(pctcvr))
+                conversion_result['map3'] = utils.evaluate_map(3, pctcvr, z, len(pctcvr))
+                conversion_result['map5'] = utils.evaluate_map(5, pctcvr, z, len(pctcvr))
+                conversion_result['map10'] = utils.evaluate_map(10, pctcvr, z, len(pctcvr))
                 print("Click Result")
                 for k, v in click_result.items():
-                    print("{}:{}".format(k, v), end='\t')
+                    print("{}:{}".format(k, v))
                 print()
                 print("Conversion Result")
                 for k, v in conversion_result.items():
-                    print("{}:{}".format(k, v), end='\t')
+                    print("{}:{}".format(k, v))
 
 
 if __name__ == "__main__":

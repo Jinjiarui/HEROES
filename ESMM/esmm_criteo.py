@@ -211,7 +211,7 @@ def main(_):
     # ------check Arguments------
     if FLAGS.dt_dir == "":
         FLAGS.dt_dir = (date.today() + timedelta(-1)).strftime('%Y%m%d')
-    FLAGS.model_dir = FLAGS.model_dir + '20210101' + "2"
+    FLAGS.model_dir = FLAGS.model_dir + FLAGS.dt_dir + "2"
 
     print('task_type ', FLAGS.task_type)
     print('model_dir ', FLAGS.model_dir)
@@ -296,21 +296,37 @@ def main(_):
         click_result['auc'] = utils.evaluate_auc(pctr, y)
         click_result['f1'] = utils.evaluate_f1_score(pctr, y)
         click_result['ndcg'] = utils.evaluate_ndcg(None, pctr, y, len(pctr))
+        click_result['ndcg1'] = utils.evaluate_ndcg(1, pctr, y, len(pctr))
+        click_result['ndcg3'] = utils.evaluate_ndcg(3, pctr, y, len(pctr))
+        click_result['ndcg5'] = utils.evaluate_ndcg(5, pctr, y, len(pctr))
+        click_result['ndcg10'] = utils.evaluate_ndcg(10, pctr, y, len(pctr))
         click_result['map'] = utils.evaluate_map(len(pctr), pctr, y, len(pctr))
+        click_result['map1'] = utils.evaluate_map(1, pctr, y, len(pctr))
+        click_result['map3'] = utils.evaluate_map(3, pctr, y, len(pctr))
+        click_result['map5'] = utils.evaluate_map(5, pctr, y, len(pctr))
+        click_result['map10'] = utils.evaluate_map(10, pctr, y, len(pctr))
 
         conversion_result['loss'] = utils.evaluate_logloss(pctcvr, z)
         conversion_result['acc'] = utils.evaluate_acc(pctcvr, z)
         conversion_result['auc'] = utils.evaluate_auc(pctcvr, z)
         conversion_result['f1'] = utils.evaluate_f1_score(pctcvr, z)
         conversion_result['ndcg'] = utils.evaluate_ndcg(None, pctcvr, z, len(pctcvr))
+        conversion_result['ndcg1'] = utils.evaluate_ndcg(1, pctcvr, z, len(pctcvr))
+        conversion_result['ndcg3'] = utils.evaluate_ndcg(3, pctcvr, z, len(pctcvr))
+        conversion_result['ndcg5'] = utils.evaluate_ndcg(5, pctcvr, z, len(pctcvr))
+        conversion_result['ndcg10'] = utils.evaluate_ndcg(10, pctcvr, z, len(pctcvr))
         conversion_result['map'] = utils.evaluate_map(len(pctcvr), pctcvr, z, len(pctcvr))
+        conversion_result['map1'] = utils.evaluate_map(1, pctcvr, z, len(pctcvr))
+        conversion_result['map3'] = utils.evaluate_map(3, pctcvr, z, len(pctcvr))
+        conversion_result['map5'] = utils.evaluate_map(5, pctcvr, z, len(pctcvr))
+        conversion_result['map10'] = utils.evaluate_map(10, pctcvr, z, len(pctcvr))
         print("Click Result")
         for k, v in click_result.items():
-            print("{}:{}".format(k, v), end='\t')
+            print("{}:{}".format(k, v))
         print()
         print("Conversion Result")
         for k, v in conversion_result.items():
-            print("{}:{}".format(k, v), end='\t')
+            print("{}:{}".format(k, v))
         '''with open(FLAGS.data_dir + "/pred2.txt", "w") as fo:
             for prob in preds:
                 fo.write("%f\t%f\n" % (prob['pctr'], prob['pctcvr']))'''
