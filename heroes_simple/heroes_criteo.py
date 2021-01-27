@@ -66,30 +66,6 @@ inputs = tf.concat([inputs, tf.reshape(position_copy, (-1, seq_max_len, embeddin
 inputs = tf.transpose(inputs, [1, 0, 2])  # (seq,bs,11*embed+1)
 
 
-def batch_norm_layer(x, train_phase, scope_bn):
-    bn_train = tf.contrib.layers.batch_norm(x, decay=FLAGS.batch_norm_decay, center=True, scale=True,
-                                            updates_collections=None, is_training=True, reuse=None, scope=scope_bn)
-    bn_infer = tf.contrib.layers.batch_norm(x, decay=FLAGS.batch_norm_decay, center=True, scale=True,
-                                            updates_collections=None, is_training=False, reuse=True, scope=scope_bn)
-    z = tf.cond(tf.cast(train_phase, tf.bool), lambda: bn_train, lambda: bn_infer)
-    return z
-
-
-def fully_connected(x, basename, mode):
-    for i in range(len(layers)):
-        x = tf.layers.dense(inputs=x, units=layers[i], use_bias=True, name='%s%d' % (basename, i))
-        x = tf.nn.relu(x)
-        if mode == 'train':
-            train_phase = True
-        else:
-            train_phase = False
-        if FLAGS.batch_norm:
-            x = batch_norm_layer(x, train_phase=train_phase, scope_bn='%s_bn_%d' % (basename, i))
-        if mode == 'train':
-            x = tf.nn.dropout(x, keep_prob=dropout[i])
-            # Apply Dropout after all BN layers and set dropout=0.8(drop_ratio=0.2)
-    return tf.sigmoid(tf.layers.dense(inputs=x, units=n_classes, use_bias=True, name=basename))
-
 
 with tf.name_scope('RNN'), tf.variable_scope("RNN", reuse=tf.AUTO_REUSE):
     n_hidden = FLAGS.n_hidden
@@ -325,7 +301,7 @@ def main(_):
     if FLAGS.task_type == 'eval':
         with tf.Session(config=config) as sess:
             sess.run(tf.local_variables_initializer())
-            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-4000'))
+            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-4500'))
             for te in te_files:
                 print(te)
                 te_infile = open(te, 'r')
@@ -354,7 +330,8 @@ def main(_):
     if FLAGS.task_type == 'infer':
         with tf.Session(config=config) as sess:
             sess.run(tf.local_variables_initializer())
-            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-4000'))
+            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-4500'))
+            te_len_list = []
             for te in te_files:
                 print(te)
                 te_infile = open(te, 'r')
@@ -367,6 +344,7 @@ def main(_):
                     step += 1
                     total_data, total_click_label, total_label, total_seqlen = loadCriteoBatch(
                         FLAGS.batch_size, FLAGS.seq_max_len, te_infile)
+                    te_len_list += total_seqlen
                     feed_dict = {
                         input: total_data,
                         seq_len: total_seqlen,
@@ -382,37 +360,41 @@ def main(_):
                     if len(total_label) != FLAGS.batch_size:
                         break
                 print(pctr.shape)
+                print(sum(te_len_list))
                 click_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
                 conversion_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
+                indices = [te_len_list[0]]
+                for _ in range(1, len(te_len_list) - 1):
+                    indices.append(indices[-1] + te_len_list[_])
                 click_result['loss'] = utils.evaluate_logloss(pctr, y)
                 click_result['acc'] = utils.evaluate_acc(pctr, y)
                 click_result['auc'] = utils.evaluate_auc(pctr, y)
                 click_result['f1'] = utils.evaluate_f1_score(pctr, y)
-                click_result['ndcg'] = utils.evaluate_ndcg(None, pctr, y, len(pctr))
-                click_result['ndcg1'] = utils.evaluate_ndcg(1, pctr, y, len(pctr))
-                click_result['ndcg3'] = utils.evaluate_ndcg(3, pctr, y, len(pctr))
-                click_result['ndcg5'] = utils.evaluate_ndcg(5, pctr, y, len(pctr))
-                click_result['ndcg10'] = utils.evaluate_ndcg(10, pctr, y, len(pctr))
-                click_result['map'] = utils.evaluate_map(len(pctr), pctr, y, len(pctr))
-                click_result['map1'] = utils.evaluate_map(1, pctr, y, len(pctr))
-                click_result['map3'] = utils.evaluate_map(3, pctr, y, len(pctr))
-                click_result['map5'] = utils.evaluate_map(5, pctr, y, len(pctr))
-                click_result['map10'] = utils.evaluate_map(10, pctr, y, len(pctr))
+                click_result['ndcg'] = utils.evaluate_ndcg(None, pctr, y, indices)
+                click_result['ndcg1'] = utils.evaluate_ndcg(1, pctr, y, indices)
+                click_result['ndcg3'] = utils.evaluate_ndcg(3, pctr, y, indices)
+                click_result['ndcg5'] = utils.evaluate_ndcg(5, pctr, y, indices)
+                click_result['ndcg10'] = utils.evaluate_ndcg(10, pctr, y, indices)
+                click_result['map'] = utils.evaluate_map(None, pctr, y, indices)
+                click_result['map1'] = utils.evaluate_map(1, pctr, y, indices)
+                click_result['map3'] = utils.evaluate_map(3, pctr, y, indices)
+                click_result['map5'] = utils.evaluate_map(5, pctr, y, indices)
+                click_result['map10'] = utils.evaluate_map(10, pctr, y, indices)
 
                 conversion_result['loss'] = utils.evaluate_logloss(pctcvr, z)
                 conversion_result['acc'] = utils.evaluate_acc(pctcvr, z)
                 conversion_result['auc'] = utils.evaluate_auc(pctcvr, z)
                 conversion_result['f1'] = utils.evaluate_f1_score(pctcvr, z)
-                conversion_result['ndcg'] = utils.evaluate_ndcg(None, pctcvr, z, len(pctcvr))
-                conversion_result['ndcg1'] = utils.evaluate_ndcg(1, pctcvr, z, len(pctcvr))
-                conversion_result['ndcg3'] = utils.evaluate_ndcg(3, pctcvr, z, len(pctcvr))
-                conversion_result['ndcg5'] = utils.evaluate_ndcg(5, pctcvr, z, len(pctcvr))
-                conversion_result['ndcg10'] = utils.evaluate_ndcg(10, pctcvr, z, len(pctcvr))
-                conversion_result['map'] = utils.evaluate_map(len(pctcvr), pctcvr, z, len(pctcvr))
-                conversion_result['map1'] = utils.evaluate_map(1, pctcvr, z, len(pctcvr))
-                conversion_result['map3'] = utils.evaluate_map(3, pctcvr, z, len(pctcvr))
-                conversion_result['map5'] = utils.evaluate_map(5, pctcvr, z, len(pctcvr))
-                conversion_result['map10'] = utils.evaluate_map(10, pctcvr, z, len(pctcvr))
+                conversion_result['ndcg'] = utils.evaluate_ndcg(None, pctcvr, z, indices)
+                conversion_result['ndcg1'] = utils.evaluate_ndcg(1, pctcvr, z, indices)
+                conversion_result['ndcg3'] = utils.evaluate_ndcg(3, pctcvr, z, indices)
+                conversion_result['ndcg5'] = utils.evaluate_ndcg(5, pctcvr, z, indices)
+                conversion_result['ndcg10'] = utils.evaluate_ndcg(10, pctcvr, z, indices)
+                conversion_result['map'] = utils.evaluate_map(None, pctcvr, z, indices)
+                conversion_result['map1'] = utils.evaluate_map(1, pctcvr, z, indices)
+                conversion_result['map3'] = utils.evaluate_map(3, pctcvr, z, indices)
+                conversion_result['map5'] = utils.evaluate_map(5, pctcvr, z, indices)
+                conversion_result['map10'] = utils.evaluate_map(10, pctcvr, z, indices)
                 print("Click Result")
                 for k, v in click_result.items():
                     print("{}:{}".format(k, v))
