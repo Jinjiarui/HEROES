@@ -8,7 +8,7 @@ For the Ali-CCP, we have done a certain sampling work. The original training set
 
 In ESMM and MMOE models, sequence prediction is not involved, so we convert the data to tfrecord format in advance to speed up training. For the specific conversion code, refer to the get_tfreord*.py code in the [ESMM](https://github.com/Jinjiarui/HEROES/tree/master/ESMM) folder.
 
-##I nstallation and Running
+## Installation and Running
 TensorFlow(>=1.14) and dependant packages (e.g., numpy and sklearn) should be pre-installed before running the code.
 
 After package installation and data have been prepared and you are in the correct model folder, you can simply run the code:
