@@ -1,6 +1,6 @@
 import glob
 import os
-import pickle
+from multiprocessing import Queue, Process
 
 import numpy as np
 import tensorflow as tf
@@ -25,8 +25,27 @@ with tf.Session() as sess:
     print(a)
     print(sess.run(H_c_p))
     print(sess.run(c_copy))
+    print(sess.run(tf.map_fn(lambda i: i + 1, b_test)))
 
 x = np.array([0, 0, 0, 0, 0, 0, 1])
 z = np.argsort(-x)
 print(z)
 print(x[z])
+
+q = Queue()
+
+
+def f(q, link=1):
+    for i in range(link):
+        for i in q:
+            print(i)
+
+
+te = ['1', '21', 'AVD', [111, 'aa', 2]]
+lk = 2
+q.put(te)
+q.put(lk)
+Pw = Process(target=f, args=(te, 2))
+Pw.start()
+
+Pw.join()

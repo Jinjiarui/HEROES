@@ -47,7 +47,7 @@ def loadAliBatch(max_seq_len, fin, batch_seq_list):
 
 
 if __name__ == '__main__':
-    '''h = ["1.1:1.1:1.1", "2.1:2.1:2.1"]
+    h = ["1.1:1.1:1.1", "2.1:2.1:2.1"]
     h1 = [_.split(':') for _ in h]
     print(h1)
     tmp_id = []
@@ -65,7 +65,17 @@ if __name__ == '__main__':
 
     with open('../alicpp/train/remap_sample/r_train.txt' + '.pkl', 'rb') as len_f:
         data = list(pickle.load(len_f))
-    print(max(data))
+    print(sum(data))
+    with open('../alicpp/train/remap_sample/r_train.txt' , 'r') as f:
+        for seq_len in data[:10]:
+            for i in range(seq_len):
+                line = f.readline().rstrip().split()
+                print(line)
+            print()
+
+
+
+'''    print(max(data))
     for i in [1, 10, 20, 40, 80, 100, 160, 200]:
         print(np.sum(list(map(lambda x: x >= i, data))))
 
@@ -103,7 +113,7 @@ if __name__ == '__main__':
         h = sess.run(out, feed_dict={input_id: (indices, values, shape), input_value: (v_indices, v_values, v_shape)})
         print(h)
         print(h.shape)
-        print(h.reshape(-1, 2, h.shape[1]))'''
+        print(h.reshape(-1, 2, h.shape[1]))
     all_files = glob.glob("./../alicpp/small/small*.txt")
     print("all_files:", all_files)
     for tr in all_files:
@@ -111,4 +121,4 @@ if __name__ == '__main__':
         with open(tr_len, 'rb') as len_f:
             tr_len_list = list(pickle.load(len_f))
         print(tr_len_list)
-        print(len(tr_len_list))
+        print(len(tr_len_list))'''

@@ -18,7 +18,7 @@ tf.flags.DEFINE_integer("embedding_size", 48, "Embedding size")
 tf.flags.DEFINE_integer("seq_max_len", 50, "seq_max_len")
 tf.flags.DEFINE_integer("num_epochs", 100, "Number of epochs")
 tf.flags.DEFINE_integer("batch_size", 100, "Number of batch size")
-tf.flags.DEFINE_float("learning_rate", 1e-2, "learning rate")
+tf.flags.DEFINE_float("learning_rate", 1e-3, "learning rate")
 tf.flags.DEFINE_float("l2_reg", 0.01, "L2 regularization")
 tf.flags.DEFINE_string("loss_type", 'log_loss', "loss type {square_loss, log_loss}")
 tf.flags.DEFINE_float("ctr_task_wgt", 0.5, "loss weight of ctr task")
@@ -36,6 +36,7 @@ tf.flags.DEFINE_string("model_dir", './../Criteo/model_Criteo_Heroes', "model ch
 tf.flags.DEFINE_string("servable_model_dir", '', "export servable model for TensorFlow Serving")
 tf.flags.DEFINE_string("task_type", 'train', "task type {train, infer, eval}")
 tf.flags.DEFINE_boolean("clear_existing_model", False, "clear existing model or not")
+tf.flags.DEFINE_float("Proportion", 1, "The proportion you want to train")
 
 os.environ['CUDA_VISIBLE_DEVICES'] = FLAGS.gpus
 
@@ -164,7 +165,7 @@ def main(_):
     # ------check Arguments------
     if FLAGS.dt_dir == "":
         FLAGS.dt_dir = (date.today() + timedelta(-1)).strftime('%Y%m%d')
-    FLAGS.model_dir = FLAGS.model_dir + FLAGS.dt_dir + "P"
+    FLAGS.model_dir = FLAGS.model_dir + FLAGS.dt_dir + "Pro:{}".format(FLAGS.Proportion)
 
     print('task_type ', FLAGS.task_type)
     print('model_dir ', FLAGS.model_dir)
@@ -183,6 +184,7 @@ def main(_):
     print('learning_rate ', FLAGS.learning_rate)
     print('l2_reg ', FLAGS.l2_reg)
     print('ctr_task_wgt ', FLAGS.ctr_task_wgt)
+    print('Proportion ', FLAGS.Proportion)
 
     tr_files = glob.glob("%s/train/*.txt" % FLAGS.data_dir)
     print("train_files:", tr_files)
@@ -204,7 +206,8 @@ def main(_):
             sess.run(tf.global_variables_initializer())
             sess.run(tf.local_variables_initializer())
             if not FLAGS.clear_existing_model:
-                saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-4000'))
+                saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-3500'))
+            max_step = FLAGS.Proportion * 450000
             for tr in tr_files:
                 for i in range(FLAGS.num_epochs):
                     step = 0
@@ -239,7 +242,7 @@ def main(_):
                         print("Loss = " + "{}".format(batch_loss), end='\t')
                         print("Clk Loss = " + "{}".format(batch_click_loss), end='\t')
                         print("Cov_Loss = " + "{}".format(batch_cvr_loss))
-                        if len(total_label) != FLAGS.batch_size:
+                        if len(total_label) != FLAGS.batch_size or step * FLAGS.batch_size > max_step:
                             break
                         if step % 500 == 0:
                             saver.save(sess, os.path.join(FLAGS.model_dir, 'MyModel'), global_step=step)
@@ -328,7 +331,7 @@ def main(_):
     if FLAGS.task_type == 'infer':
         with tf.Session(config=config) as sess:
             sess.run(tf.local_variables_initializer())
-            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-4500'))
+            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-500'))
             te_len_list = []
             for te in te_files:
                 print(te)

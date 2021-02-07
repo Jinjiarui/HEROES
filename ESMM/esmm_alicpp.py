@@ -1,5 +1,6 @@
 import glob
 import os
+import pickle
 import random
 import shutil
 import sys
@@ -230,8 +231,16 @@ def model_fn(features, labels, mode, params):
     y = labels['y']
     z = labels['z']
 
-    ctr_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=y_ctr, labels=y))
-    ctcvr_loss = tf.reduce_mean(tf.losses.log_loss(predictions=pctcvr, labels=z))
+    epsilon = 1e-7
+    click_weight = 0.08
+    conversion_weight = 0.04
+    ctr_loss = - (1 - click_weight) * y * tf.log(pctr + epsilon) - click_weight * (1 - y) * tf.log(1 - pctr + epsilon)
+    ctr_loss = tf.reduce_mean(ctr_loss)
+    ctcvr_loss = - (1 - conversion_weight) * z * tf.log(pctcvr + epsilon) - \
+                 conversion_weight * (1 - z) * tf.log(1 - pctcvr + epsilon)
+    ctcvr_loss = tf.reduce_mean(ctcvr_loss)
+    # ctr_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=y_ctr, labels=y))
+    # ctcvr_loss = tf.reduce_mean(tf.losses.log_loss(predictions=pctcvr, labels=z))
     loss = ctr_task_wgt * ctr_loss + (1 - ctr_task_wgt) * ctcvr_loss + l2_reg * tf.nn.l2_loss(Feat_Emb)
     tf.summary.scalar('ctr_loss', ctr_loss)
     tf.summary.scalar('cvr_loss', ctcvr_loss)
@@ -294,6 +303,7 @@ def main(_):
     random.shuffle(tr_files)
     print("train_files:", tr_files)
     te_files = glob.glob("%s/test/r*txt.tfrecord" % FLAGS.data_dir)
+
     print("test_files:", te_files)
 
     if FLAGS.clear_existing_model:
@@ -351,46 +361,68 @@ def main(_):
         y = np.array(y)
         pctcvr = np.array(pctcvr)
         z = np.array(z)
+        print(len(pctr))
+        te_files_pkl = glob.glob("%s/test/remap_sample/r*txt.pkl" % FLAGS.data_dir)[0]
+        with open(te_files_pkl, 'rb') as len_f:
+            te_len_list = np.array(pickle.load(len_f))
+        seq_max_len = 160
+        print(sum(te_len_list))
+
+        def f(_):
+            if _ > seq_max_len:
+                return np.array([False] * (_ - seq_max_len) + [True] * seq_max_len)
+            else:
+                return np.array([True] * _)
+
+        te_len_cond = list(map(f, te_len_list))
+        te_len_cond = np.concatenate(te_len_cond)
+        print(sum(te_len_cond))
+        te_len_arg = np.argwhere(te_len_cond)
+        pctr = pctcvr[te_len_arg]
+        y = y[te_len_arg]
+        pctcvr = pctcvr[te_len_arg]
+        z = z[te_len_arg]
+        print(len(z))
+        te_len_cut = np.where(te_len_list >= seq_max_len, seq_max_len, te_len_list)
+        print(sum(te_len_cut))
+        indices = np.cumsum(te_len_cut)
         click_result['loss'] = utils.evaluate_logloss(pctr, y)
         click_result['acc'] = utils.evaluate_acc(pctr, y)
         click_result['auc'] = utils.evaluate_auc(pctr, y)
         click_result['f1'] = utils.evaluate_f1_score(pctr, y)
-        click_result['ndcg'] = utils.evaluate_ndcg(None, pctr, y, len(pctr))
-        click_result['ndcg1'] = utils.evaluate_ndcg(1, pctr, y, len(pctr))
-        click_result['ndcg3'] = utils.evaluate_ndcg(3, pctr, y, len(pctr))
-        click_result['ndcg5'] = utils.evaluate_ndcg(5, pctr, y, len(pctr))
-        click_result['ndcg10'] = utils.evaluate_ndcg(10, pctr, y, len(pctr))
-        click_result['map'] = utils.evaluate_map(len(pctr), pctr, y, len(pctr))
-        click_result['map1'] = utils.evaluate_map(1, pctr, y, len(pctr))
-        click_result['map3'] = utils.evaluate_map(3, pctr, y, len(pctr))
-        click_result['map5'] = utils.evaluate_map(5, pctr, y, len(pctr))
-        click_result['map10'] = utils.evaluate_map(10, pctr, y, len(pctr))
+        click_result['ndcg'] = utils.evaluate_ndcg(None, pctr, y, indices)
+        click_result['ndcg1'] = utils.evaluate_ndcg(1, pctr, y, indices)
+        click_result['ndcg3'] = utils.evaluate_ndcg(3, pctr, y, indices)
+        click_result['ndcg5'] = utils.evaluate_ndcg(5, pctr, y, indices)
+        click_result['ndcg10'] = utils.evaluate_ndcg(10, pctr, y, indices)
+        click_result['map'] = utils.evaluate_map(None, pctr, y, indices)
+        click_result['map1'] = utils.evaluate_map(1, pctr, y, indices)
+        click_result['map3'] = utils.evaluate_map(3, pctr, y, indices)
+        click_result['map5'] = utils.evaluate_map(5, pctr, y, indices)
+        click_result['map10'] = utils.evaluate_map(10, pctr, y, indices)
 
         conversion_result['loss'] = utils.evaluate_logloss(pctcvr, z)
         conversion_result['acc'] = utils.evaluate_acc(pctcvr, z)
         conversion_result['auc'] = utils.evaluate_auc(pctcvr, z)
         conversion_result['f1'] = utils.evaluate_f1_score(pctcvr, z)
-        conversion_result['ndcg'] = utils.evaluate_ndcg(None, pctcvr, z, len(pctcvr))
-        conversion_result['ndcg1'] = utils.evaluate_ndcg(1, pctcvr, z, len(pctcvr))
-        conversion_result['ndcg3'] = utils.evaluate_ndcg(3, pctcvr, z, len(pctcvr))
-        conversion_result['ndcg5'] = utils.evaluate_ndcg(5, pctcvr, z, len(pctcvr))
-        conversion_result['ndcg10'] = utils.evaluate_ndcg(10, pctcvr, z, len(pctcvr))
-        conversion_result['map'] = utils.evaluate_map(len(pctcvr), pctcvr, z, len(pctcvr))
-        conversion_result['map1'] = utils.evaluate_map(1, pctcvr, z, len(pctcvr))
-        conversion_result['map3'] = utils.evaluate_map(3, pctcvr, z, len(pctcvr))
-        conversion_result['map5'] = utils.evaluate_map(5, pctcvr, z, len(pctcvr))
-        conversion_result['map10'] = utils.evaluate_map(10, pctcvr, z, len(pctcvr))
+        conversion_result['ndcg'] = utils.evaluate_ndcg(None, pctcvr, z, indices)
+        conversion_result['ndcg1'] = utils.evaluate_ndcg(1, pctcvr, z, indices)
+        conversion_result['ndcg3'] = utils.evaluate_ndcg(3, pctcvr, z, indices)
+        conversion_result['ndcg5'] = utils.evaluate_ndcg(5, pctcvr, z, indices)
+        conversion_result['ndcg10'] = utils.evaluate_ndcg(10, pctcvr, z, indices)
+        conversion_result['map'] = utils.evaluate_map(None, pctcvr, z, indices)
+        conversion_result['map1'] = utils.evaluate_map(1, pctcvr, z, indices)
+        conversion_result['map3'] = utils.evaluate_map(3, pctcvr, z, indices)
+        conversion_result['map5'] = utils.evaluate_map(5, pctcvr, z, indices)
+        conversion_result['map10'] = utils.evaluate_map(10, pctcvr, z, indices)
 
         print("Click Result")
         for k, v in click_result.items():
-            print("{}:{}".format(k, v), end='\t')
+            print("{}:{}".format(k, v))
         print()
         print("Conversion Result")
         for k, v in conversion_result.items():
-            print("{}:{}".format(k, v), end='\t')
-        '''with open(FLAGS.data_dir + "/pred2.txt", "w") as fo:
-            for prob in preds:
-                fo.write("%f\t%f\n" % (prob['pctr'], prob['pctcvr']))'''
+            print("{}:{}".format(k, v))
 
 
 if __name__ == "__main__":

@@ -32,7 +32,7 @@ tf.flags.DEFINE_boolean("batch_norm", True, "perform batch normaization (True or
 tf.flags.DEFINE_float("batch_norm_decay", 0.9, "decay for the moving average(recommend trying decay=0.9)")
 tf.flags.DEFINE_string("data_dir", './../Criteo', "data dir")
 tf.flags.DEFINE_string("dt_dir", '', "data dt partition")
-tf.flags.DEFINE_string("model_dir", './../Criteo/model_Criteo_Heroes', "model check point dir")
+tf.flags.DEFINE_string("model_dir", './../Criteo/model_Criteo_click_Heroes', "model check point dir")
 tf.flags.DEFINE_string("servable_model_dir", '', "export servable model for TensorFlow Serving")
 tf.flags.DEFINE_string("task_type", 'train', "task type {train, infer, eval}")
 tf.flags.DEFINE_boolean("clear_existing_model", False, "clear existing model or not")
@@ -82,6 +82,7 @@ with tf.name_scope('RNN'), tf.variable_scope("RNN", reuse=tf.AUTO_REUSE):
     pc = tf.ones_like(g)  # The product of 1-H_c
     pv = tf.ones_like(g)  # The product of 1-H_v
     g = tf.tile(g, [1, n_hidden])  # (bs,hidden)
+    click_transpose = tf.transpose(click_label, [1, 0, 2])  # (seq,bs,n_class)
     for i in range(seq_max_len):
         f_c = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=True, name='xfc')
                          + tf.layers.dense(H_c, units=n_hidden, use_bias=False, name='hfc'))
@@ -97,9 +98,13 @@ with tf.name_scope('RNN'), tf.variable_scope("RNN", reuse=tf.AUTO_REUSE):
         H_c = tf.multiply(o_c, tf.tanh(s_c))
         H_c_p = tf.sigmoid(tf.layers.dense(inputs=H_c, units=n_classes, reuse=tf.AUTO_REUSE, use_bias=True, name='H_c'))
         prediction_c.append(H_c_p)
-        # g = tf.where(prediction_c[-1] >= 0.5, tf.ones_like(prediction_c[-1]), tf.zeros_like(prediction_c[-1]))
-        pc = tf.where(prediction_c[-1] >= 0.5, tf.ones_like(prediction_c[-1]), tf.multiply(1 - H_c_p, pc))
-        g = tf.tile(H_c_p, [1, n_hidden])
+        if mode == 'train' or mode=='infer':
+            g = tf.where(click_transpose[i] >= 0.5, tf.ones_like(prediction_c[-1]), tf.zeros_like(prediction_c[-1]))
+            pc = tf.where(click_transpose[i] >= 0.5, tf.ones_like(prediction_c[-1]), tf.multiply(1 - H_c_p, pc))
+        else:
+            g = tf.where(prediction_c[-1] >= 0.5, tf.ones_like(prediction_c[-1]), tf.zeros_like(prediction_c[-1]))
+            pc = tf.where(prediction_c[-1] >= 0.5, tf.ones_like(prediction_c[-1]), tf.multiply(1 - H_c_p, pc))
+        g = tf.tile(g, [1, n_hidden])
         f_v = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=True, name='xfv')
                          + tf.layers.dense(H_v, units=n_hidden, use_bias=False, name='hfv'))
         i_v = tf.sigmoid(tf.layers.dense(inputs[i], units=n_hidden, use_bias=True, name='xiv')
@@ -164,7 +169,7 @@ def main(_):
     # ------check Arguments------
     if FLAGS.dt_dir == "":
         FLAGS.dt_dir = (date.today() + timedelta(-1)).strftime('%Y%m%d')
-    FLAGS.model_dir = FLAGS.model_dir + FLAGS.dt_dir + "P"
+    FLAGS.model_dir = FLAGS.model_dir + FLAGS.dt_dir
 
     print('task_type ', FLAGS.task_type)
     print('model_dir ', FLAGS.model_dir)
@@ -204,7 +209,7 @@ def main(_):
             sess.run(tf.global_variables_initializer())
             sess.run(tf.local_variables_initializer())
             if not FLAGS.clear_existing_model:
-                saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-4000'))
+                saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-4500'))
             for tr in tr_files:
                 for i in range(FLAGS.num_epochs):
                     step = 0
@@ -299,7 +304,7 @@ def main(_):
     if FLAGS.task_type == 'eval':
         with tf.Session(config=config) as sess:
             sess.run(tf.local_variables_initializer())
-            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-4500'))
+            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-3000'))
             for te in te_files:
                 print(te)
                 te_infile = open(te, 'r')
@@ -328,7 +333,7 @@ def main(_):
     if FLAGS.task_type == 'infer':
         with tf.Session(config=config) as sess:
             sess.run(tf.local_variables_initializer())
-            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-4500'))
+            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-3000'))
             te_len_list = []
             for te in te_files:
                 print(te)

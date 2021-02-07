@@ -1,5 +1,6 @@
 import glob
 import os
+import pickle
 import random
 import shutil
 import sys
@@ -291,35 +292,78 @@ def main(_):
         y = np.array(y)
         pctcvr = np.array(pctcvr)
         z = np.array(z)
+        print(len(pctr))
+        te_files_pkl = glob.glob("%s/test/*txt" % FLAGS.data_dir)[0]
+        te_len_list = []
+        with open(te_files_pkl) as fin:
+            while True:
+                try:
+                    (seq_len, label) = [int(_) for _ in fin.readline().rstrip().split()]
+                    te_len_list.append(seq_len)
+                    for _ in range(seq_len):
+                        fin.readline()
+                except:
+                    break
+        te_len_list = np.array(te_len_list)
+        print(sum(te_len_list))
+
+        seq_max_len = 50
+
+        def f(_):
+            if _ > 2:
+                if _ > seq_max_len:
+                    return np.array([False] * (_ - seq_max_len) + [True] * seq_max_len)
+                else:
+                    return np.array([True] * _)
+            else:
+                return np.array([False] * _)
+
+        te_len_cond = list(map(f, te_len_list))
+        te_len_cond = np.concatenate(te_len_cond)
+        print(te_len_cond[:1000])
+        print(sum(te_len_cond))
+        te_len_arg = np.argwhere(te_len_cond)
+        pctr = pctcvr[te_len_arg]
+        y = y[te_len_arg]
+        pctcvr = pctcvr[te_len_arg]
+        z = z[te_len_arg]
+        print(len(z))
+        te_len_cut = te_len_list[te_len_list > 2]
+        print(sum(te_len_cut))
+        te_len_cut = np.where(te_len_cut >= seq_max_len, seq_max_len, te_len_cut)
+        print(sum(te_len_cut))
+        indices = np.cumsum(te_len_cut)
+
         click_result['loss'] = utils.evaluate_logloss(pctr, y)
         click_result['acc'] = utils.evaluate_acc(pctr, y)
         click_result['auc'] = utils.evaluate_auc(pctr, y)
         click_result['f1'] = utils.evaluate_f1_score(pctr, y)
-        click_result['ndcg'] = utils.evaluate_ndcg(None, pctr, y, len(pctr))
-        click_result['ndcg1'] = utils.evaluate_ndcg(1, pctr, y, len(pctr))
-        click_result['ndcg3'] = utils.evaluate_ndcg(3, pctr, y, len(pctr))
-        click_result['ndcg5'] = utils.evaluate_ndcg(5, pctr, y, len(pctr))
-        click_result['ndcg10'] = utils.evaluate_ndcg(10, pctr, y, len(pctr))
-        click_result['map'] = utils.evaluate_map(len(pctr), pctr, y, len(pctr))
-        click_result['map1'] = utils.evaluate_map(1, pctr, y, len(pctr))
-        click_result['map3'] = utils.evaluate_map(3, pctr, y, len(pctr))
-        click_result['map5'] = utils.evaluate_map(5, pctr, y, len(pctr))
-        click_result['map10'] = utils.evaluate_map(10, pctr, y, len(pctr))
+        click_result['ndcg'] = utils.evaluate_ndcg(None, pctr, y, indices)
+        click_result['ndcg1'] = utils.evaluate_ndcg(1, pctr, y, indices)
+        click_result['ndcg3'] = utils.evaluate_ndcg(3, pctr, y, indices)
+        click_result['ndcg5'] = utils.evaluate_ndcg(5, pctr, y, indices)
+        click_result['ndcg10'] = utils.evaluate_ndcg(10, pctr, y, indices)
+        click_result['map'] = utils.evaluate_map(None, pctr, y, indices)
+        click_result['map1'] = utils.evaluate_map(1, pctr, y, indices)
+        click_result['map3'] = utils.evaluate_map(3, pctr, y, indices)
+        click_result['map5'] = utils.evaluate_map(5, pctr, y, indices)
+        click_result['map10'] = utils.evaluate_map(10, pctr, y, indices)
 
         conversion_result['loss'] = utils.evaluate_logloss(pctcvr, z)
         conversion_result['acc'] = utils.evaluate_acc(pctcvr, z)
         conversion_result['auc'] = utils.evaluate_auc(pctcvr, z)
         conversion_result['f1'] = utils.evaluate_f1_score(pctcvr, z)
-        conversion_result['ndcg'] = utils.evaluate_ndcg(None, pctcvr, z, len(pctcvr))
-        conversion_result['ndcg1'] = utils.evaluate_ndcg(1, pctcvr, z, len(pctcvr))
-        conversion_result['ndcg3'] = utils.evaluate_ndcg(3, pctcvr, z, len(pctcvr))
-        conversion_result['ndcg5'] = utils.evaluate_ndcg(5, pctcvr, z, len(pctcvr))
-        conversion_result['ndcg10'] = utils.evaluate_ndcg(10, pctcvr, z, len(pctcvr))
-        conversion_result['map'] = utils.evaluate_map(len(pctcvr), pctcvr, z, len(pctcvr))
-        conversion_result['map1'] = utils.evaluate_map(1, pctcvr, z, len(pctcvr))
-        conversion_result['map3'] = utils.evaluate_map(3, pctcvr, z, len(pctcvr))
-        conversion_result['map5'] = utils.evaluate_map(5, pctcvr, z, len(pctcvr))
-        conversion_result['map10'] = utils.evaluate_map(10, pctcvr, z, len(pctcvr))
+        conversion_result['ndcg'] = utils.evaluate_ndcg(None, pctcvr, z, indices)
+        conversion_result['ndcg1'] = utils.evaluate_ndcg(1, pctcvr, z, indices)
+        conversion_result['ndcg3'] = utils.evaluate_ndcg(3, pctcvr, z, indices)
+        conversion_result['ndcg5'] = utils.evaluate_ndcg(5, pctcvr, z, indices)
+        conversion_result['ndcg10'] = utils.evaluate_ndcg(10, pctcvr, z, indices)
+        conversion_result['map'] = utils.evaluate_map(None, pctcvr, z, indices)
+        conversion_result['map1'] = utils.evaluate_map(1, pctcvr, z, indices)
+        conversion_result['map3'] = utils.evaluate_map(3, pctcvr, z, indices)
+        conversion_result['map5'] = utils.evaluate_map(5, pctcvr, z, indices)
+        conversion_result['map10'] = utils.evaluate_map(10, pctcvr, z, indices)
+
         print("Click Result")
         for k, v in click_result.items():
             print("{}:{}".format(k, v))
@@ -327,9 +371,6 @@ def main(_):
         print("Conversion Result")
         for k, v in conversion_result.items():
             print("{}:{}".format(k, v))
-        '''with open(FLAGS.data_dir + "/pred2.txt", "w") as fo:
-            for prob in preds:
-                fo.write("%f\t%f\n" % (prob['pctr'], prob['pctcvr']))'''
 
 
 if __name__ == "__main__":

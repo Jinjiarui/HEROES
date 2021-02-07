@@ -1,5 +1,6 @@
 import glob
 import os
+import pickle
 import random
 import shutil
 import sys
@@ -264,8 +265,16 @@ def model_fn(features, labels, mode, params):
     y = labels['y']
     z = labels['z']
 
-    ctr_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=y_ctr, labels=y))
-    ctcvr_loss = tf.reduce_mean(tf.losses.log_loss(predictions=pctcvr, labels=z))
+    epsilon = 1e-7
+    click_weight = 0.08
+    conversion_weight = 0.04
+    ctr_loss = - (1 - click_weight) * y * tf.log(pctr + epsilon) - click_weight * (1 - y) * tf.log(1 - pctr + epsilon)
+    ctr_loss = tf.reduce_mean(ctr_loss)
+    ctcvr_loss = - (1 - conversion_weight) * z * tf.log(pctcvr + epsilon) - \
+                 conversion_weight * (1 - z) * tf.log(1 - pctcvr + epsilon)
+    ctcvr_loss = tf.reduce_mean(ctcvr_loss)
+    # ctr_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=y_ctr, labels=y))
+    # ctcvr_loss = tf.reduce_mean(tf.losses.log_loss(predictions=pctcvr, labels=z))
     loss = ctr_task_wgt * ctr_loss + (1 - ctr_task_wgt) * ctcvr_loss + l2_reg * tf.nn.l2_loss(Feat_Emb)
     tf.summary.scalar('ctr_loss', ctr_loss)
     tf.summary.scalar('cvr_loss', ctcvr_loss)
@@ -387,35 +396,43 @@ def main(_):
         y = np.array(y)
         pctcvr = np.array(pctcvr)
         z = np.array(z)
+        print(len(pctr))
+        te_files_pkl = glob.glob("%s/test/remap_sample/r*txt.pkl" % FLAGS.data_dir)[0]
+        with open(te_files_pkl, 'rb') as len_f:
+            te_len_list = list(pickle.load(len_f))
+        indices = [te_len_list[0]]
+        for _ in range(1, len(te_len_list) - 1):
+            indices.append(indices[-1] + te_len_list[_])
         click_result['loss'] = utils.evaluate_logloss(pctr, y)
         click_result['acc'] = utils.evaluate_acc(pctr, y)
         click_result['auc'] = utils.evaluate_auc(pctr, y)
         click_result['f1'] = utils.evaluate_f1_score(pctr, y)
-        click_result['ndcg'] = utils.evaluate_ndcg(None, pctr, y, len(pctr))
-        click_result['ndcg1'] = utils.evaluate_ndcg(1, pctr, y, len(pctr))
-        click_result['ndcg3'] = utils.evaluate_ndcg(3, pctr, y, len(pctr))
-        click_result['ndcg5'] = utils.evaluate_ndcg(5, pctr, y, len(pctr))
-        click_result['ndcg10'] = utils.evaluate_ndcg(10, pctr, y, len(pctr))
-        click_result['map'] = utils.evaluate_map(len(pctr), pctr, y, len(pctr))
-        click_result['map1'] = utils.evaluate_map(1, pctr, y, len(pctr))
-        click_result['map3'] = utils.evaluate_map(3, pctr, y, len(pctr))
-        click_result['map5'] = utils.evaluate_map(5, pctr, y, len(pctr))
-        click_result['map10'] = utils.evaluate_map(10, pctr, y, len(pctr))
+        click_result['ndcg'] = utils.evaluate_ndcg(None, pctr, y, indices)
+        click_result['ndcg1'] = utils.evaluate_ndcg(1, pctr, y, indices)
+        click_result['ndcg3'] = utils.evaluate_ndcg(3, pctr, y, indices)
+        click_result['ndcg5'] = utils.evaluate_ndcg(5, pctr, y, indices)
+        click_result['ndcg10'] = utils.evaluate_ndcg(10, pctr, y, indices)
+        click_result['map'] = utils.evaluate_map(None, pctr, y, indices)
+        click_result['map1'] = utils.evaluate_map(1, pctr, y, indices)
+        click_result['map3'] = utils.evaluate_map(3, pctr, y, indices)
+        click_result['map5'] = utils.evaluate_map(5, pctr, y, indices)
+        click_result['map10'] = utils.evaluate_map(10, pctr, y, indices)
 
         conversion_result['loss'] = utils.evaluate_logloss(pctcvr, z)
         conversion_result['acc'] = utils.evaluate_acc(pctcvr, z)
         conversion_result['auc'] = utils.evaluate_auc(pctcvr, z)
         conversion_result['f1'] = utils.evaluate_f1_score(pctcvr, z)
-        conversion_result['ndcg'] = utils.evaluate_ndcg(None, pctcvr, z, len(pctcvr))
-        conversion_result['ndcg1'] = utils.evaluate_ndcg(1, pctcvr, z, len(pctcvr))
-        conversion_result['ndcg3'] = utils.evaluate_ndcg(3, pctcvr, z, len(pctcvr))
-        conversion_result['ndcg5'] = utils.evaluate_ndcg(5, pctcvr, z, len(pctcvr))
-        conversion_result['ndcg10'] = utils.evaluate_ndcg(10, pctcvr, z, len(pctcvr))
-        conversion_result['map'] = utils.evaluate_map(len(pctcvr), pctcvr, z, len(pctcvr))
-        conversion_result['map1'] = utils.evaluate_map(1, pctcvr, z, len(pctcvr))
-        conversion_result['map3'] = utils.evaluate_map(3, pctcvr, z, len(pctcvr))
-        conversion_result['map5'] = utils.evaluate_map(5, pctcvr, z, len(pctcvr))
-        conversion_result['map10'] = utils.evaluate_map(10, pctcvr, z, len(pctcvr))
+        conversion_result['ndcg'] = utils.evaluate_ndcg(None, pctcvr, z, indices)
+        conversion_result['ndcg1'] = utils.evaluate_ndcg(1, pctcvr, z, indices)
+        conversion_result['ndcg3'] = utils.evaluate_ndcg(3, pctcvr, z, indices)
+        conversion_result['ndcg5'] = utils.evaluate_ndcg(5, pctcvr, z, indices)
+        conversion_result['ndcg10'] = utils.evaluate_ndcg(10, pctcvr, z, indices)
+        conversion_result['map'] = utils.evaluate_map(None, pctcvr, z, indices)
+        conversion_result['map1'] = utils.evaluate_map(1, pctcvr, z, indices)
+        conversion_result['map3'] = utils.evaluate_map(3, pctcvr, z, indices)
+        conversion_result['map5'] = utils.evaluate_map(5, pctcvr, z, indices)
+        conversion_result['map10'] = utils.evaluate_map(10, pctcvr, z, indices)
+
         print("Click Result")
         for k, v in click_result.items():
             print("{}:{}".format(k, v))
