@@ -3,6 +3,7 @@ import os
 import shutil
 import sys
 from datetime import timedelta, date
+from multiprocessing import Process, Queue
 
 import numpy as np
 import tensorflow as tf
@@ -98,7 +99,7 @@ with tf.name_scope('RNN'), tf.variable_scope("RNN", reuse=tf.AUTO_REUSE):
         H_c = tf.multiply(o_c, tf.tanh(s_c))
         H_c_p = tf.sigmoid(tf.layers.dense(inputs=H_c, units=n_classes, reuse=tf.AUTO_REUSE, use_bias=True, name='H_c'))
         prediction_c.append(H_c_p)
-        if mode == 'train' or mode=='infer':
+        if mode == 'train' or mode == 'infer':
             g = tf.where(click_transpose[i] >= 0.5, tf.ones_like(prediction_c[-1]), tf.zeros_like(prediction_c[-1]))
             pc = tf.where(click_transpose[i] >= 0.5, tf.ones_like(prediction_c[-1]), tf.multiply(1 - H_c_p, pc))
         else:
@@ -120,7 +121,10 @@ with tf.name_scope('RNN'), tf.variable_scope("RNN", reuse=tf.AUTO_REUSE):
 
         H_v_p = tf.sigmoid(tf.layers.dense(inputs=H_v, units=n_classes, reuse=tf.AUTO_REUSE, use_bias=True, name='H_v'))
         prediction_v.append(tf.multiply(H_v_p, pv))
-        pv = tf.where(prediction_c[-1] > 0.5, tf.ones_like(prediction_v[-1]), tf.multiply(1 - H_v_p, pv))
+        if mode == 'train' or mode == 'infer':
+            pv = tf.where(click_transpose[-1] > 0.5, tf.ones_like(prediction_v[-1]), tf.multiply(1 - H_v_p, pv))
+        else:
+            pv = tf.where(prediction_c[-1] > 0.5, tf.ones_like(prediction_v[-1]), tf.multiply(1 - H_v_p, pv))
 
 mask = tf.sequence_mask(seq_len, seq_max_len)
 prediction_c = tf.boolean_mask(tf.transpose(tf.stack(prediction_c), [1, 0, 2]), mask)
@@ -165,6 +169,25 @@ train_op = optimizer.minimize(loss, global_step=global_step)
 saver = tf.train.Saver(max_to_keep=3)
 
 
+def write(q, flag, file_name, num_epoch=1, buffer_size=10):
+    print(file_name)
+
+    for _ in range(num_epoch):
+        step = 0
+        infile = open(file_name, 'r')
+        while True:
+            if q.qsize() <= buffer_size:
+                print(step)
+                step += 1
+                total_zip_data = loadCriteoBatch(FLAGS.batch_size, FLAGS.seq_max_len, infile)
+                total_data, total_click_label, total_label, total_seqlen = total_zip_data
+                q.put(total_zip_data)
+                if len(total_label) != FLAGS.batch_size:
+                    break
+        infile.close()
+    flag.get()
+
+
 def main(_):
     # ------check Arguments------
     if FLAGS.dt_dir == "":
@@ -205,38 +228,78 @@ def main(_):
                             device_count={'CPU': FLAGS.num_threads})
     config.gpu_options.allow_growth = True
     if FLAGS.task_type == 'train':
-        with tf.Session(config=config) as sess:
-            sess.run(tf.global_variables_initializer())
-            sess.run(tf.local_variables_initializer())
-            if not FLAGS.clear_existing_model:
-                saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-4500'))
-            for tr in tr_files:
-                for i in range(FLAGS.num_epochs):
-                    step = 0
-                    tr_infile = open(tr, 'r')
-                    best_auc = 0
-                    while True:
-                        step += 1
-                        total_data, total_click_label, total_label, total_seqlen = loadCriteoBatch(
-                            FLAGS.batch_size, FLAGS.seq_max_len, tr_infile)
-                        feed_dict = {
-                            input: total_data,
-                            seq_len: total_seqlen,
-                            click_label: total_click_label,
-                            conversion_label: total_label
-                        }
-                        batch_c_weight, batch_v_weight, batch_c_label, batch_c, _, batch_loss, batch_cvr_loss, batch_click_loss, batch_eval = sess.run(
-                            [click_weight, conversion_weight, reshape_click_label, prediction_c, train_op, loss,
-                             conversion_loss,
-                             click_loss,
-                             eval_metric_ops],
-                            feed_dict=feed_dict)
-                        print(np.sum(batch_c_label), np.sum(batch_c >= 0.5))
-                        print(utils.evaluate_acc(label=batch_c_label, pred=batch_c),
-                              utils.evaluate_auc(label=batch_c_label, pred=batch_c),
-                              utils.evaluate_acc(label=batch_c_label, pred=np.zeros_like(batch_c_label)))
-                        print(batch_c_weight, batch_v_weight)
-                        print("Epoch:{}\tStep:{}".format(i, step))
+        def read_train(q, flag):
+            with tf.Session(config=config) as sess:
+                sess.run(tf.global_variables_initializer())
+                sess.run(tf.local_variables_initializer())
+                if not FLAGS.clear_existing_model:
+                    saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-4000'))
+                epoch = 0
+                step = 0
+                best_auc = 0.0
+                while not flag.empty() or not q.empty():
+                    step += 1
+                    total_data, total_click_label, total_label, total_seqlen = q.get(True)
+                    feed_dict = {
+                        input: total_data,
+                        seq_len: total_seqlen,
+                        click_label: total_click_label,
+                        conversion_label: total_label
+                    }
+                    _, batch_loss, batch_cvr_loss, batch_click_loss, batch_eval = sess.run(
+                        [train_op, loss, conversion_loss, click_loss, eval_metric_ops],
+                        feed_dict=feed_dict)
+                    print("Epoch:{}\tStep:{}".format(epoch, step))
+                    print("click_AUC = " + "{}".format(batch_eval['CTR_AUC'][0]), end='\t')
+                    print("conversion_AUC = " + "{}".format(batch_eval['CTCVR_AUC'][0]), end='\t')
+                    print("click_ACC = " + "{}".format(batch_eval['CTR_ACC'][0]), end='\t')
+                    print("conversion_ACC = " + "{}".format(batch_eval['CTCVR_ACC'][0]))
+                    print("Loss = " + "{}".format(batch_loss), end='\t')
+                    print("Clk Loss = " + "{}".format(batch_click_loss), end='\t')
+                    print("Cov_Loss = " + "{}".format(batch_cvr_loss))
+                    if step % 500 == 0:
+                        saver.save(sess, os.path.join(FLAGS.model_dir, 'MyModel'), global_step=step)
+                        print("Test----------------")
+                        test_cvr_auc = 0.0
+                        test_ctr_auc = 0.0
+                        test_cvr_acc = 0.0
+                        test_ctr_acc = 0.0
+                        test_loss = 0
+                        test_clk_loss = 0
+                        test_cvr_loss = 0
+                        test_step = 0
+                        for te in te_files:
+                            te_infile = open(te, 'r')
+                            for _ in range(10):
+                                test_step += 1
+                                test_total_data, test_total_click_label, test_total_label, test_total_seqlen = loadCriteoBatch(
+                                    FLAGS.batch_size, FLAGS.seq_max_len, te_infile)
+                                feed_dict = {
+                                    input: test_total_data,
+                                    seq_len: test_total_seqlen,
+                                    click_label: test_total_click_label,
+                                    conversion_label: test_total_label
+                                }
+                                batch_loss, batch_cvr_loss, batch_click_loss, batch_eval = sess.run(
+                                    [loss, conversion_loss, click_loss, eval_metric_ops],
+                                    feed_dict=feed_dict)
+                                test_ctr_auc += batch_eval['CTR_AUC'][0]
+                                test_cvr_auc += batch_eval['CTCVR_AUC'][0]
+                                test_ctr_acc += batch_eval['CTR_ACC'][0]
+                                test_cvr_acc += batch_eval['CTCVR_ACC'][0]
+                                test_loss += batch_loss
+                                test_cvr_loss += batch_cvr_loss
+                                test_clk_loss += batch_click_loss
+                                if len(test_total_label) != FLAGS.batch_size:
+                                    break
+                            te_infile.close()
+                        test_ctr_auc /= test_step
+                        test_cvr_auc /= test_step
+                        test_cvr_acc /= test_step
+                        test_ctr_acc /= test_step
+                        test_loss /= test_step
+                        test_clk_loss /= test_step
+                        test_cvr_loss /= step
                         print("click_AUC = " + "{}".format(batch_eval['CTR_AUC'][0]), end='\t')
                         print("conversion_AUC = " + "{}".format(batch_eval['CTCVR_AUC'][0]), end='\t')
                         print("click_ACC = " + "{}".format(batch_eval['CTR_ACC'][0]), end='\t')
@@ -244,63 +307,24 @@ def main(_):
                         print("Loss = " + "{}".format(batch_loss), end='\t')
                         print("Clk Loss = " + "{}".format(batch_click_loss), end='\t')
                         print("Cov_Loss = " + "{}".format(batch_cvr_loss))
-                        if len(total_label) != FLAGS.batch_size:
-                            break
-                        if step % 500 == 0:
-                            saver.save(sess, os.path.join(FLAGS.model_dir, 'MyModel'), global_step=step)
-                            print("Test----------------")
-                            test_cvr_auc = 0.0
-                            test_ctr_auc = 0.0
-                            test_cvr_acc = 0.0
-                            test_ctr_acc = 0.0
-                            test_loss = 0
-                            test_clk_loss = 0
-                            test_cvr_loss = 0
-                            test_step = 0
-                            for te in te_files:
-                                te_infile = open(te, 'r')
-                                for _ in range(10):
-                                    test_step += 1
-                                    test_total_data, test_total_click_label, test_total_label, test_total_seqlen = loadCriteoBatch(
-                                        FLAGS.batch_size, FLAGS.seq_max_len, te_infile)
-                                    feed_dict = {
-                                        input: test_total_data,
-                                        seq_len: test_total_seqlen,
-                                        click_label: test_total_click_label,
-                                        conversion_label: test_total_label
-                                    }
-                                    batch_loss, batch_cvr_loss, batch_click_loss, batch_eval = sess.run(
-                                        [loss, conversion_loss, click_loss, eval_metric_ops],
-                                        feed_dict=feed_dict)
-                                    test_ctr_auc += batch_eval['CTR_AUC'][0]
-                                    test_cvr_auc += batch_eval['CTCVR_AUC'][0]
-                                    test_ctr_acc += batch_eval['CTR_ACC'][0]
-                                    test_cvr_acc += batch_eval['CTCVR_ACC'][0]
-                                    test_loss += batch_loss
-                                    test_cvr_loss += batch_cvr_loss
-                                    test_clk_loss += batch_click_loss
-                                    if len(test_total_label) != FLAGS.batch_size:
-                                        break
-                                te_infile.close()
-                            test_ctr_auc /= test_step
-                            test_cvr_auc /= test_step
-                            test_cvr_acc /= test_step
-                            test_ctr_acc /= test_step
-                            test_loss /= test_step
-                            test_clk_loss /= test_step
-                            test_cvr_loss /= step
+                        if test_cvr_auc > best_auc:
+                            print("Save----------------")
+                            saver.save(sess, os.path.join(FLAGS.model_dir, 'BestModel'), global_step=step)
+                    if len(total_label) != FLAGS.batch_size:
+                        epoch += 1
+                        step = 0
+                        continue
 
-                            print("click_AUC = " + "{}".format(test_ctr_auc), end='\t')
-                            print("conversion_AUC = " + "{}".format(test_cvr_auc), end='\t')
-                            print("click_ACC = " + "{}".format(test_ctr_acc), end='\t')
-                            print("conversion_ACC = " + "{}".format(test_cvr_acc))
-                            print("Loss = " + "{}".format(test_loss), end='\t')
-                            print("Clk Loss = " + "{}".format(test_clk_loss), end='\t')
-                            print("Cov_Loss = " + "{}".format(test_cvr_loss))
-                            if test_cvr_auc > best_auc:
-                                print("Save----------------")
-                                saver.save(sess, os.path.join(FLAGS.model_dir, 'BestModel'), global_step=step)
-                    tr_infile.close()
+        for tr in tr_files:
+            q = Queue()
+            flag = Queue()
+            flag.put(True)
+            Pw = Process(target=write, args=(q, flag, tr, FLAGS.num_epochs))
+            Pr = Process(target=read_train, args=(q, flag))
+            Pw.start()
+            Pr.start()
+            Pw.join()
+            Pr.join()
     if FLAGS.task_type == 'eval':
         with tf.Session(config=config) as sess:
             sess.run(tf.local_variables_initializer())
@@ -331,22 +355,17 @@ def main(_):
                     if len(total_label) != FLAGS.batch_size:
                         break
     if FLAGS.task_type == 'infer':
-        with tf.Session(config=config) as sess:
-            sess.run(tf.local_variables_initializer())
-            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-3000'))
-            te_len_list = []
-            for te in te_files:
-                print(te)
-                te_infile = open(te, 'r')
-                step = 0
+        def read_infer(q, flag):
+            with tf.Session(config=config) as sess:
+                sess.run(tf.local_variables_initializer())
+                saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-4500'))
+                te_len_list = []
                 pctr = np.array([])
-                y = np.array([])
-                pctcvr = np.array([])
-                z = np.array([])
-                while True:
-                    step += 1
-                    total_data, total_click_label, total_label, total_seqlen = loadCriteoBatch(
-                        FLAGS.batch_size, FLAGS.seq_max_len, te_infile)
+                y =  np.array([])
+                pctcvr =  np.array([])
+                z =  np.array([])
+                while not flag.empty() or not q.empty():
+                    total_data, total_click_label, total_label, total_seqlen = q.get(True)
                     te_len_list += total_seqlen
                     feed_dict = {
                         input: total_data,
@@ -354,21 +373,18 @@ def main(_):
                         click_label: total_click_label,
                         conversion_label: total_label
                     }
-                    p_click, l_click, p_conver, l_conver = sess.run([prediction_c, reshape_click_label, prediction_v,
-                                                                     reshape_conversion_label], feed_dict=feed_dict)
+                    p_click, l_click, p_conver, l_conver = sess.run(
+                        [prediction_c, reshape_click_label, prediction_v,
+                         reshape_conversion_label], feed_dict=feed_dict)
                     pctr = np.append(pctr, p_click)
                     y = np.append(y, l_click)
                     pctcvr = np.append(pctcvr, p_conver)
                     z = np.append(z, l_conver)
-                    if len(total_label) != FLAGS.batch_size:
-                        break
                 print(pctr.shape)
                 print(sum(te_len_list))
                 click_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
                 conversion_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
-                indices = [te_len_list[0]]
-                for _ in range(1, len(te_len_list) - 1):
-                    indices.append(indices[-1] + te_len_list[_])
+                indices = np.cumsum(te_len_list)
                 click_result['loss'] = utils.evaluate_logloss(pctr, y)
                 click_result['acc'] = utils.evaluate_acc(pctr, y)
                 click_result['auc'] = utils.evaluate_auc(pctr, y)
@@ -405,6 +421,17 @@ def main(_):
                 print("Conversion Result")
                 for k, v in conversion_result.items():
                     print("{}:{}".format(k, v))
+
+        for te in te_files:
+            q = Queue()
+            flag = Queue()
+            flag.put(True)
+            Pw = Process(target=write, args=(q, flag, te))
+            Pr = Process(target=read_infer, args=(q, flag))
+            Pw.start()
+            Pr.start()
+            Pw.join()
+            Pr.join()
 
 
 if __name__ == "__main__":

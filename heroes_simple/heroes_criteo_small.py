@@ -331,7 +331,7 @@ def main(_):
     if FLAGS.task_type == 'infer':
         with tf.Session(config=config) as sess:
             sess.run(tf.local_variables_initializer())
-            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-500'))
+            saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-1500'))
             te_len_list = []
             for te in te_files:
                 print(te)

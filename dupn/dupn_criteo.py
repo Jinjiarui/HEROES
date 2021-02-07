@@ -10,17 +10,16 @@ import tensorflow as tf
 
 sys.path.append("../")
 from utils import utils
-
 from load_criteo import loadCriteoBatch
 
 FLAGS = tf.flags.FLAGS
 tf.flags.DEFINE_integer("num_threads", 64, "Number of threads")
-tf.flags.DEFINE_integer("max_features", 5897, "Number of max_features")
+tf.flags.DEFINE_integer("max_features", 638072, "Number of max_features")
 tf.flags.DEFINE_integer("embedding_size", 96, "Embedding size")
 tf.flags.DEFINE_integer("seq_max_len", 50, "seq_max_len")
 tf.flags.DEFINE_integer("num_epochs", 100, "Number of epochs")
 tf.flags.DEFINE_integer("batch_size", 100, "Number of batch size")
-tf.flags.DEFINE_float("learning_rate", 1e-2, "learning rate")
+tf.flags.DEFINE_float("learning_rate", 1e-3, "learning rate")
 tf.flags.DEFINE_float("l2_reg", 0.1, "L2 regularization")
 tf.flags.DEFINE_string("loss_type", 'log_loss', "loss type {square_loss, log_loss}")
 tf.flags.DEFINE_float("ctr_task_wgt", 0.5, "loss weight of ctr task")
@@ -33,7 +32,7 @@ tf.flags.DEFINE_boolean("batch_norm", True, "perform batch normaization (True or
 tf.flags.DEFINE_float("batch_norm_decay", 0.9, "decay for the moving average(recommend trying decay=0.9)")
 tf.flags.DEFINE_string("data_dir", './../Criteo', "data dir")
 tf.flags.DEFINE_string("dt_dir", '', "data dt partition")
-tf.flags.DEFINE_string("model_dir", './../Criteo/model_Criteo_dnn', "model check point dir")
+tf.flags.DEFINE_string("model_dir", './../Criteo/model_Criteo_dupn', "model check point dir")
 tf.flags.DEFINE_string("servable_model_dir", '', "export servable model for TensorFlow Serving")
 tf.flags.DEFINE_string("task_type", 'train', "task type {train, infer, eval}")
 tf.flags.DEFINE_boolean("clear_existing_model", False, "clear existing model or not")
@@ -44,6 +43,7 @@ input = tf.placeholder(tf.float32, shape=[None, FLAGS.seq_max_len, 11])
 seq_len = tf.placeholder(tf.int32, shape=[None], name='seqlen')
 click_label = tf.placeholder(tf.float32, shape=[None, FLAGS.seq_max_len, FLAGS.n_classes], name='clicks')
 conversion_label = tf.placeholder(tf.float32, shape=[None, FLAGS.seq_max_len, FLAGS.n_classes], name='labels')
+
 embedding_size = FLAGS.embedding_size
 l2_reg = FLAGS.l2_reg
 learning_rate = FLAGS.learning_rate
@@ -51,6 +51,7 @@ max_features = FLAGS.max_features
 seq_max_len = FLAGS.seq_max_len
 ctr_task_wgt = FLAGS.ctr_task_wgt
 embedding_matrix = tf.Variable(tf.random_normal([max_features, embedding_size], stddev=0.1))
+
 print(input.shape)
 n_hidden = FLAGS.n_hidden
 n_classes = FLAGS.n_classes
@@ -59,60 +60,61 @@ x2 = tf.to_int32(x2)
 x2 = tf.nn.embedding_lookup(embedding_matrix, x2)
 x2 = tf.reshape(x2, [-1, seq_max_len, 10 * embedding_size])
 x = tf.concat((x1, x2), axis=2)
-print(x.shape)
-
-with tf.name_scope('P_o'), tf.variable_scope('P_o', reuse=tf.AUTO_REUSE):
-    lstm_cell_o = tf.nn.rnn_cell.BasicLSTMCell(FLAGS.n_hidden, name='o')
-    states_o, last_o = tf.nn.dynamic_rnn(cell=lstm_cell_o, inputs=x, sequence_length=seq_len, dtype=tf.float32)
-    P_o = tf.sigmoid(tf.layers.dense(states_o, units=n_classes, use_bias=True, name='P_o'))  # (bs,seq,n_classes)
-
-with tf.name_scope('P_r'), tf.variable_scope('P_r', reuse=tf.AUTO_REUSE):
-    lstm_cell_r = tf.nn.rnn_cell.BasicLSTMCell(FLAGS.n_hidden, name='r')
-    states_r, last_r = tf.nn.dynamic_rnn(cell=lstm_cell_r, inputs=x, sequence_length=seq_len,
-                                         dtype=tf.float32)  # (bs,seq,hidden)
-    P_r = tf.sigmoid(tf.layers.dense(states_r, units=n_classes, use_bias=True, name='P_r'))  # (bs,seq,n_classes)
-
-with tf.name_scope('P_c'), tf.variable_scope('P_c', reuse=tf.AUTO_REUSE):
-    P_c = tf.multiply(P_o, P_r)
-
-with tf.name_scope('P_a'), tf.variable_scope('P_a', reuse=tf.AUTO_REUSE):
-    lstm_cell_a = tf.nn.rnn_cell.BasicLSTMCell(FLAGS.n_hidden, name='a')
-    states_a, last_a = tf.nn.dynamic_rnn(cell=lstm_cell_a, inputs=states_r, sequence_length=seq_len,
-                                         dtype=tf.float32)  # (bs,seq,hidden)
-    P_a = tf.sigmoid(tf.layers.dense(states_a, units=n_classes, use_bias=True, name='P_a'))  # (bs,seq,n_classes)
-
-with tf.name_scope('P_v'):
-    P_v = tf.multiply(P_c, P_a)
-
-print(P_v.shape)
-# ------bulid loss------
+print(x.shape)  # (bs,seq,embed)
+n_input = int(x.shape[2])
+index = tf.range(0, tf.shape(x)[0]) * FLAGS.seq_max_len + (seq_len - 1)
 mask = tf.sequence_mask(seq_len, seq_max_len)
+'''x_last = tf.gather(params=tf.reshape(x, [-1, n_input]), indices=index)  # (bs,embed)
+print(x_last.shape)
+x_last = tf.reshape(x_last, [tf.shape(x)[0], 1, n_input])  # (bs,1,embed)
+print(x_last.shape)'''
 
-reshape_click_label = tf.boolean_mask(click_label, mask)
-reshape_conversion_label = tf.boolean_mask(conversion_label, mask)
-P_c = tf.boolean_mask(P_c, mask)
-P_v = tf.boolean_mask(P_v, mask)
-click_loss = tf.reduce_mean(tf.losses.log_loss(labels=reshape_click_label, predictions=P_c))
-conversion_loss = tf.reduce_mean(tf.losses.log_loss(labels=reshape_conversion_label, predictions=P_v))
+with tf.name_scope('LstmNet'), tf.variable_scope("LstmNet", reuse=tf.AUTO_REUSE):
+    lstm_cell = tf.contrib.rnn.BasicLSTMCell(n_hidden, state_is_tuple=True)
+    lstm_cell = tf.nn.rnn_cell.DropoutWrapper(lstm_cell, input_keep_prob=FLAGS.keep_prob,
+                                              output_keep_prob=FLAGS.keep_prob)
+    states_h, last_h = tf.nn.dynamic_rnn(cell=lstm_cell, inputs=x, sequence_length=seq_len, dtype=tf.float32)
+    # (bs, seq, n_hidden)
+
+with tf.name_scope('attention'), tf.variable_scope("attention", reuse=tf.AUTO_REUSE):
+    Ux = tf.layers.dense(x, units=n_hidden, use_bias=True, name='Ux')  # (bs,seq,n_hidden)
+    Uh = tf.layers.dense(states_h, units=n_hidden, use_bias=True, name='Uh')  # (bs, seq, n_hidden)
+    e = tf.reduce_sum(tf.tanh(Ux + Uh), reduction_indices=2)  # (bs,seq)
+    a = tf.map_fn(
+        lambda i: tf.concat([tf.nn.softmax(e[i][:seq_len[i]]), tf.zeros(shape=(seq_max_len - seq_len[i]))], axis=0),
+        tf.range(0, tf.shape(e)[0]), dtype=e.dtype)  # (bs,seq)
+
+    c = tf.map_fn(lambda i: tf.reduce_sum(
+        tf.multiply(tf.reshape(a[i][:seq_len[i]], shape=(-1, 1)), states_h[i][:seq_len[i]]), axis=0),
+                  tf.range(0, tf.shape(e)[0]), dtype=a.dtype)  # (bs,n_hidden)
+
+    c_seq_click = tf.layers.dense(c, units=states_h.shape[1], use_bias=True, name='Pc')  # (bs,seq)
+    c_seq_conversion = tf.layers.dense(c, units=states_h.shape[1], use_bias=True, name='Pv')  # (bs,seq)
+
+    prediction_c = tf.sigmoid(c_seq_click)  # (bs,seq)
+    prediction_v = tf.sigmoid(c_seq_conversion)  # (bs,seq)
+    prediction_v = tf.multiply(prediction_c, prediction_v)
+
+prediction_c = tf.boolean_mask(prediction_c, mask)  # (real_seq)
+prediction_v = tf.boolean_mask(prediction_v, mask)
+reshape_click_label = tf.squeeze(tf.boolean_mask(click_label, mask))
+reshape_conversion_label = tf.squeeze(tf.boolean_mask(conversion_label, mask))
+epsilon = 1e-7
+click_loss = tf.reduce_mean(tf.losses.log_loss(labels=reshape_click_label, predictions=prediction_c))
+conversion_loss = tf.reduce_mean(tf.losses.log_loss(labels=reshape_conversion_label, predictions=prediction_v))
 loss = ((1 - ctr_task_wgt) * click_loss + ctr_task_wgt * conversion_loss) * 100
-for v in tf.trainable_variables():
-    loss += l2_reg * tf.nn.l2_loss(v)
-tf.summary.scalar('ctr_loss', click_loss)
-tf.summary.scalar('ctcvr_loss', conversion_loss)
-
 threshold = 0.5
 one_click = tf.ones_like(reshape_click_label)
 zero_click = tf.zeros_like(reshape_click_label)
 one_cvr = tf.ones_like(reshape_conversion_label)
 zero_cvr = tf.zeros_like(reshape_conversion_label)
 eval_metric_ops = {
-    "CTR_AUC": tf.metrics.auc(reshape_click_label, P_c),
+    "CTR_AUC": tf.metrics.auc(reshape_click_label, prediction_c),
     "CTR_ACC": tf.metrics.accuracy(reshape_click_label,
-                                   tf.where(P_c >= threshold, one_click, zero_click)),
-    "CTCVR_AUC": tf.metrics.auc(reshape_conversion_label, P_v),
-    "CTCVR_ACC": tf.metrics.accuracy(reshape_conversion_label, tf.where(P_v >= threshold, one_cvr, zero_cvr))
+                                   tf.where(prediction_c >= threshold, one_click, zero_click)),
+    "CTCVR_AUC": tf.metrics.auc(reshape_conversion_label, prediction_v),
+    "CTCVR_ACC": tf.metrics.accuracy(reshape_conversion_label, tf.where(prediction_v >= threshold, one_cvr, zero_cvr))
 }
-
 global_step = tf.Variable(0, trainable=False)
 cov_learning_rate = tf.train.exponential_decay(learning_rate, global_step, 50000, 0.96)
 optimizer = tf.train.AdamOptimizer(learning_rate=cov_learning_rate)
@@ -167,7 +169,6 @@ def main(_):
     print("train_files:", tr_files)
     te_files = glob.glob("%s/test/*.txt" % FLAGS.data_dir)
     print("test_files:", te_files)
-
     if FLAGS.clear_existing_model:
         try:
             shutil.rmtree(FLAGS.model_dir)
@@ -197,9 +198,14 @@ def main(_):
                         click_label: total_click_label,
                         conversion_label: total_label
                     }
-                    _, batch_loss, batch_cvr_loss, batch_click_loss, batch_eval = sess.run(
-                        [train_op, loss, conversion_loss, click_loss, eval_metric_ops],
+                    batch_pv, batch_conversion, batch_pc, batch_click, _, batch_loss, batch_cvr_loss, batch_click_loss, batch_eval = sess.run(
+                        [prediction_v, reshape_conversion_label, prediction_c, reshape_click_label, train_op, loss,
+                         conversion_loss, click_loss, eval_metric_ops],
                         feed_dict=feed_dict)
+                    '''print(batch_pc)
+                    print(batch_click)
+                    print(batch_pv)
+                    print(batch_conversion)'''
                     print("Epoch:{}\tStep:{}".format(epoch, step))
                     print("click_AUC = " + "{}".format(batch_eval['CTR_AUC'][0]), end='\t')
                     print("conversion_AUC = " + "{}".format(batch_eval['CTCVR_AUC'][0]), end='\t')
@@ -310,7 +316,7 @@ def main(_):
         def read_infer(q, flag):
             with tf.Session(config=config) as sess:
                 sess.run(tf.local_variables_initializer())
-                saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-150'))
+                saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-2500'))
                 te_len_list = []
                 pctr = np.array([])
                 y = np.array([])
@@ -326,7 +332,7 @@ def main(_):
                         conversion_label: total_label
                     }
                     p_click, l_click, p_conver, l_conver = sess.run(
-                        [P_c, reshape_click_label, P_v,
+                        [prediction_c, reshape_click_label, prediction_v,
                          reshape_conversion_label], feed_dict=feed_dict)
                     pctr = np.append(pctr, p_click)
                     y = np.append(y, l_click)

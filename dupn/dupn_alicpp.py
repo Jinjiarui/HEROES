@@ -22,7 +22,7 @@ tf.flags.DEFINE_integer("seq_max_len", 160, "seq_max_len")
 tf.flags.DEFINE_integer("num_epochs", 100, "Number of epochs")
 tf.flags.DEFINE_integer("batch_size", 50, "Number of batch size")
 tf.flags.DEFINE_float("learning_rate", 1e-3, "learning rate")
-tf.flags.DEFINE_float("l2_reg", 0.001, "L2 regularization")
+tf.flags.DEFINE_float("l2_reg", 0.1, "L2 regularization")
 tf.flags.DEFINE_string("loss_type", 'log_loss', "loss type {square_loss, log_loss}")
 tf.flags.DEFINE_float("ctr_task_wgt", 0.5, "loss weight of ctr task")
 tf.flags.DEFINE_string("optimizer", 'Adam', "optimizer type {Adam, Adagrad, GD, Momentum}")
@@ -78,8 +78,9 @@ index = tf.range(0, tf.shape(x)[0]) * FLAGS.seq_max_len + (seq_len - 1)
 mask = tf.sequence_mask(seq_len, seq_max_len)
 x_last = tf.gather(params=tf.reshape(x, [-1, n_input]), indices=index)  # (bs,embed)
 print(x_last.shape)
-x_last = tf.reshape(x_last, [tf.shape(x)[0], 1, n_input])
+x_last = tf.reshape(x_last, [tf.shape(x)[0], 1, n_input])  # (bs,1,embed)
 print(x_last.shape)
+
 with tf.name_scope('LstmNet'), tf.variable_scope("LstmNet", reuse=tf.AUTO_REUSE):
     lstm_cell = tf.contrib.rnn.BasicLSTMCell(n_hidden, state_is_tuple=True)
     lstm_cell = tf.nn.rnn_cell.DropoutWrapper(lstm_cell, input_keep_prob=FLAGS.keep_prob,
@@ -102,14 +103,8 @@ with tf.name_scope('attention'), tf.variable_scope("attention", reuse=tf.AUTO_RE
     c_seq_click = tf.layers.dense(c, units=states_h.shape[1], use_bias=True, name='Pc')  # (bs,seq)
     c_seq_conversion = tf.layers.dense(c, units=states_h.shape[1], use_bias=True, name='Pv')  # (bs,seq)
 
-    prediction_c = tf.map_fn(
-        lambda i: tf.concat([tf.nn.softmax(c_seq_click[i][:seq_len[i]]), tf.zeros(shape=(seq_max_len - seq_len[i]))],
-                            axis=0),
-        tf.range(0, tf.shape(e)[0]), dtype=c.dtype)  # (bs,seq)
-    prediction_v = tf.map_fn(
-        lambda i: tf.concat(
-            [tf.nn.softmax(c_seq_conversion[i][:seq_len[i]]), tf.zeros(shape=(seq_max_len - seq_len[i]))], axis=0),
-        tf.range(0, tf.shape(e)[0]), dtype=c.dtype)  # (bs,seq)
+    prediction_c = tf.sigmoid(c_seq_click)  # (bs,seq)
+    prediction_v = tf.sigmoid(c_seq_conversion)  # (bs,seq)
 
 prediction_c = tf.boolean_mask(prediction_c, mask)  # (real_seq)
 prediction_v = tf.boolean_mask(prediction_v, mask)
@@ -124,7 +119,7 @@ click_loss = tf.reduce_mean(click_loss)
 conversion_loss = -(1 - conversion_weight) * reshape_conversion_label * tf.log(prediction_v + epsilon) - \
                   conversion_weight * (1 - reshape_conversion_label) * tf.log(1 - prediction_v + epsilon)
 conversion_loss = tf.reduce_mean(conversion_loss)
-loss = ((1 - ctr_task_wgt) * click_loss + ctr_task_wgt * conversion_loss) * 1000
+loss = ((1 - ctr_task_wgt) * click_loss + ctr_task_wgt * conversion_loss) * 100
 threshold = 0.5
 one_click = tf.ones_like(reshape_click_label)
 zero_click = tf.zeros_like(reshape_click_label)
