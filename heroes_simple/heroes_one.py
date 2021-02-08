@@ -539,10 +539,6 @@ def main(_):
                     }
                     p_click, l_click, p_conver, l_conver = sess.run([prediction_c, reshape_click_label, prediction_v,
                                                                      reshape_conversion_label], feed_dict=feed_dict)
-                    print(p_click)
-                    print(l_click)
-                    print(p_conver)
-                    print(l_conver)
                     pctr = np.append(pctr, p_click)
                     y = np.append(y, l_click)
                     pctcvr = np.append(pctcvr, p_conver)

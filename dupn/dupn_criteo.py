@@ -103,6 +103,8 @@ epsilon = 1e-7
 click_loss = tf.reduce_mean(tf.losses.log_loss(labels=reshape_click_label, predictions=prediction_c))
 conversion_loss = tf.reduce_mean(tf.losses.log_loss(labels=reshape_conversion_label, predictions=prediction_v))
 loss = ((1 - ctr_task_wgt) * click_loss + ctr_task_wgt * conversion_loss) * 100
+for v in tf.trainable_variables():
+    loss += l2_reg * tf.nn.l2_loss(v)
 threshold = 0.5
 one_click = tf.ones_like(reshape_click_label)
 zero_click = tf.zeros_like(reshape_click_label)
@@ -185,7 +187,7 @@ def main(_):
                 sess.run(tf.global_variables_initializer())
                 sess.run(tf.local_variables_initializer())
                 if not FLAGS.clear_existing_model:
-                    saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-4500'))
+                    saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-2500'))
                 epoch = 0
                 step = 0
                 best_auc = 0.0
@@ -316,7 +318,7 @@ def main(_):
         def read_infer(q, flag):
             with tf.Session(config=config) as sess:
                 sess.run(tf.local_variables_initializer())
-                saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-2500'))
+                saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-3500'))
                 te_len_list = []
                 pctr = np.array([])
                 y = np.array([])

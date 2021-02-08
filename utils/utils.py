@@ -25,22 +25,12 @@ def evaluate_auc(pred, label):
 
 
 def evaluate_acc(pred, label):
-    res = []
-    for _value in pred:
-        if _value >= 0.5:
-            res.append(1)
-        else:
-            res.append(0)
+    res = np.where(pred >= 0.5, np.ones_like(pred), np.zeros_like(pred))
     return accuracy_score(y_pred=res, y_true=label)
 
 
 def evaluate_f1_score(pred, label):
-    res = []
-    for _value in pred:
-        if _value >= 0.5:
-            res.append(1)
-        else:
-            res.append(0)
+    res = np.where(pred >= 0.5, np.ones_like(pred), np.zeros_like(pred))
     return f1_score(y_pred=res, y_true=label)
 
 
@@ -82,6 +72,7 @@ def evaluate_ndcg(k, pred_list, label_list, list_length):
     NDCG = np.mean(ndcg[ndcg >= 0])
     return NDCG
 
+
 def evaluate_map(k, pred_list, label_list, list_length):
     preds = np.array_split(pred_list.flatten(), list_length)
     labels = np.array_split(label_list.flatten(), list_length)
@@ -115,3 +106,27 @@ def evaluate_map(k, pred_list, label_list, list_length):
     Map = np.array(list(map(get_map, p_l_zip)))
     MAP = np.mean(Map[Map >= 0])
     return MAP
+
+
+def copy_positive(pred, label, list_length):
+    label_list = np.array_split(label.flatten(), list_length)
+    pred_list = np.array_split(pred.flatten(), list_length)
+    positive_loc = list(map(lambda i: np.argwhere(i > 0).flatten(), label_list))
+    negative_loc = list(map(lambda i: np.argwhere(i < 1).flatten(), label_list))
+
+    def pred_f(i):
+        if np.sum(positive_loc[i]) == 0:
+            return pred_list[i]
+        weight = int(np.size(negative_loc[i]) / (np.size(positive_loc[i])))
+        return np.append(pred_list[i][negative_loc[i]], pred_list[i][positive_loc[i]].repeat(weight))
+
+    def label_f(i):
+        if np.sum(positive_loc[i]) == 0:
+            return label_list[i]
+        weight = int(np.size(negative_loc[i]) / (np.size(positive_loc[i])))
+        return np.append(label_list[i][negative_loc[i]], label_list[i][positive_loc[i]].repeat(weight))
+
+    label_positive_copy = list(map(label_f, range(len(label_list))))
+    pred_positive_copy = list(map(pred_f, range(len(label_list))))
+    new_list_length = np.cumsum(list(map(lambda i: np.size(i), label_positive_copy)))
+    return np.concatenate(pred_positive_copy), np.concatenate(label_positive_copy), new_list_length

@@ -185,7 +185,7 @@ def main(_):
     # ------check Arguments------
     if FLAGS.dt_dir == "":
         FLAGS.dt_dir = (date.today() + timedelta(-1)).strftime('%Y%m%d')
-    FLAGS.model_dir = FLAGS.model_dir + FLAGS.dt_dir + "R"
+    FLAGS.model_dir = FLAGS.model_dir + FLAGS.dt_dir
 
     print('task_type ', FLAGS.task_type)
     print('model_dir ', FLAGS.model_dir)
@@ -368,6 +368,8 @@ def main(_):
                 saver.restore(sess, os.path.join(FLAGS.model_dir, 'BestModel-100'))
                 while not flag.empty() or not q.empty():
                     total_data_id, total_data_value, total_click, total_label, total_seqlen = q.get(True)
+                    if not total_seqlen:
+                        break
                     feed_dict = {
                         input_id: sparse_tuple_from(total_data_id),
                         input_value: sparse_tuple_from(total_data_value, dtype=np.float32),
@@ -396,35 +398,38 @@ def main(_):
                 te_len_cut = np.where(te_len_list >= seq_max_len, seq_max_len, te_len_list)
                 print(sum(te_len_cut))
                 indices = np.cumsum(te_len_cut)
+                pctr_copy, y_copy, indices_click = utils.copy_positive(pctr, y, indices)
+                pctcvr_copy, z_copy, indices_label = utils.copy_positive(pctcvr, z, indices)
+                print(len(pctr_copy), len(y_copy), len(pctcvr_copy), len(z_copy))
                 click_result['loss'] = utils.evaluate_logloss(pctr, y)
-                click_result['acc'] = utils.evaluate_acc(pctr, y)
+                click_result['acc'] = utils.evaluate_acc(pctr_copy, y_copy)
                 click_result['auc'] = utils.evaluate_auc(pctr, y)
-                click_result['f1'] = utils.evaluate_f1_score(pctr, y)
+                click_result['f1'] = utils.evaluate_f1_score(pctr_copy, y_copy)
                 click_result['ndcg'] = utils.evaluate_ndcg(None, pctr, y, indices)
                 click_result['ndcg1'] = utils.evaluate_ndcg(1, pctr, y, indices)
                 click_result['ndcg3'] = utils.evaluate_ndcg(3, pctr, y, indices)
                 click_result['ndcg5'] = utils.evaluate_ndcg(5, pctr, y, indices)
                 click_result['ndcg10'] = utils.evaluate_ndcg(10, pctr, y, indices)
-                click_result['map'] = utils.evaluate_map(None, pctr, y, indices)
-                click_result['map1'] = utils.evaluate_map(1, pctr, y, indices)
-                click_result['map3'] = utils.evaluate_map(3, pctr, y, indices)
-                click_result['map5'] = utils.evaluate_map(5, pctr, y, indices)
-                click_result['map10'] = utils.evaluate_map(10, pctr, y, indices)
+                click_result['map'] = utils.evaluate_map(None, pctr_copy, y_copy, indices_click)
+                click_result['map1'] = utils.evaluate_map(1, pctr_copy, y_copy, indices_click)
+                click_result['map3'] = utils.evaluate_map(3, pctr_copy, y_copy, indices_click)
+                click_result['map5'] = utils.evaluate_map(5, pctr_copy, y_copy, indices_click)
+                click_result['map10'] = utils.evaluate_map(10, pctr_copy, y_copy, indices_click)
 
                 conversion_result['loss'] = utils.evaluate_logloss(pctcvr, z)
-                conversion_result['acc'] = utils.evaluate_acc(pctcvr, z)
+                conversion_result['acc'] = utils.evaluate_acc(pctcvr_copy, z_copy)
                 conversion_result['auc'] = utils.evaluate_auc(pctcvr, z)
-                conversion_result['f1'] = utils.evaluate_f1_score(pctcvr, z)
+                conversion_result['f1'] = utils.evaluate_f1_score(pctcvr_copy, z_copy)
                 conversion_result['ndcg'] = utils.evaluate_ndcg(None, pctcvr, z, indices)
                 conversion_result['ndcg1'] = utils.evaluate_ndcg(1, pctcvr, z, indices)
                 conversion_result['ndcg3'] = utils.evaluate_ndcg(3, pctcvr, z, indices)
                 conversion_result['ndcg5'] = utils.evaluate_ndcg(5, pctcvr, z, indices)
                 conversion_result['ndcg10'] = utils.evaluate_ndcg(10, pctcvr, z, indices)
-                conversion_result['map'] = utils.evaluate_map(None, pctcvr, z, indices)
-                conversion_result['map1'] = utils.evaluate_map(1, pctcvr, z, indices)
-                conversion_result['map3'] = utils.evaluate_map(3, pctcvr, z, indices)
-                conversion_result['map5'] = utils.evaluate_map(5, pctcvr, z, indices)
-                conversion_result['map10'] = utils.evaluate_map(10, pctcvr, z, indices)
+                conversion_result['map'] = utils.evaluate_map(None, pctcvr_copy, z_copy, indices_label)
+                conversion_result['map1'] = utils.evaluate_map(1, pctcvr_copy, z_copy, indices_label)
+                conversion_result['map3'] = utils.evaluate_map(3, pctcvr_copy, z_copy, indices_label)
+                conversion_result['map5'] = utils.evaluate_map(5, pctcvr_copy, z_copy, indices_label)
+                conversion_result['map10'] = utils.evaluate_map(10, pctcvr_copy, z_copy, indices_label)
                 print("Click Result")
                 for k, v in click_result.items():
                     print("{}:{}".format(k, v))
