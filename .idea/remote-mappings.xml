@@ -6,7 +6,7 @@
         <remote-mappings server-id="python@sftp://chenxianyu@gpu27:22084/NAS2020/Workspaces/MLGroup/chenxianyu/envs/anaconda3/envs/tf/bin/python">
           <settings>
             <list>
-              <mapping local-root="$PROJECT_DIR$" remote-root="/NAS2020/Share/chenxianyu/PycharmProjects/Heros" />
+              <mapping local-root="$PROJECT_DIR$" remote-root="/NAS2020/Share/chenxianyu/PycharmProjects/Heroes" />
             </list>
           </settings>
         </remote-mappings>

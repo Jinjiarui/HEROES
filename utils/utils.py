@@ -4,11 +4,11 @@ from sklearn.metrics import roc_auc_score, accuracy_score, log_loss, f1_score
 
 
 def glorot(shape, name=None, scale=1.):
-    import torch
+    import tensorflow
     """Glorot & Bengio (AISTATS 2010) init."""
     init_range = np.sqrt(6.0 / (shape[-1] + shape[-2])) * scale
     initial = np.random.uniform(-init_range, init_range, shape)
-    return torch.Tensor(initial)
+    return tensorflow.convert_to_tensor(initial)
 
 
 def evaluate_auc(pred, label):

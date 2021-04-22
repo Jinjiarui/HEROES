@@ -1,32 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="On explicit save action" serverName="chenxianyu@gpu24:22084 agent" remoteFilesAllowedToDisappearOnAutoupload="false" autoUploadExternalChanges="true">
+  <component name="PublishConfigData" autoUpload="On explicit save action" serverName="chenxianyu@gpu27:22084 key (1)" remoteFilesAllowedToDisappearOnAutoupload="false" autoUploadExternalChanges="true">
     <serverData>
-      <paths name="chenxianyu@gpu24:22084 agent">
+      <paths name="chenxianyu@gpu27:22084 key (1)">
         <serverdata>
           <mappings>
-            <mapping deploy="/NAS2020/Share/chenxianyu/PycharmProjects/Heros" local="$PROJECT_DIR$" web="/" />
-          </mappings>
-        </serverdata>
-      </paths>
-      <paths name="chenxianyu@gpu27:22084 agent">
-        <serverdata>
-          <mappings>
-            <mapping local="$PROJECT_DIR$" web="/" />
-          </mappings>
-        </serverdata>
-      </paths>
-      <paths name="chenxianyu@gpu27:22084 agent (1)">
-        <serverdata>
-          <mappings>
-            <mapping local="$PROJECT_DIR$" web="/" />
-          </mappings>
-        </serverdata>
-      </paths>
-      <paths name="chenxianyu@gpu9:22084 agent">
-        <serverdata>
-          <mappings>
-            <mapping local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/NAS2020/Share/chenxianyu/PycharmProjects/Heroes" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>

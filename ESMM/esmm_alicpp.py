@@ -105,7 +105,7 @@ def input_fn(filenames, batch_size=32, num_epochs=1, perform_shuffle=False, pred
 
 
 def model_fn(features, labels, mode, params):
-    """Bulid Model function f(x) for Estimator."""
+    """Build Model function f(x) for Estimator."""
     # ------hyperparameters----
     feature_size = params["feature_size"]
     embedding_size = params["embedding_size"]
