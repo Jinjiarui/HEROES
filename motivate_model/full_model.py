@@ -5,7 +5,8 @@ import back_model
 
 class Model(object):
     def __init__(self, placeholders, embedding_size, seq_max_len, max_features, n_hidden, n_classes, keep_prob,
-                 prediction_embed_list, lr, click_weight, conversion_weight, ctr_task_wgt, l2_reg, model_name='Heroes',
+                 prediction_embed_list, decay_step, lr, click_weight, conversion_weight, ctr_task_wgt, l2_reg,
+                 model_name='Heroes',
                  dataset_name='Criteo'):
         self.placeholders = placeholders
         self.seq_max_len = seq_max_len
@@ -28,7 +29,7 @@ class Model(object):
             -(1 - conversion_weight) / conversion_weight * labels * tf.log(logits + epsilon) - \
             (1 - labels) * tf.log(1 - logits + epsilon)
         self.global_step = tf.Variable(0, trainable=False)
-        cov_learning_rate = tf.train.exponential_decay(self.lr, self.global_step, 50000, 0.96)
+        cov_learning_rate = tf.train.exponential_decay(self.lr, self.global_step, decay_step, 0.96)
         self.optimizer = tf.train.AdamOptimizer(learning_rate=cov_learning_rate)
 
     def get_back_model(self, embedding_size, seq_max_len, n_hidden, n_classes, keep_prob,

@@ -1,32 +1,20 @@
-import multiprocessing
-import time
+class A(object):
+    def __init__(self):
+        self.a = self.f()
+
+    def f(self):
+        return 10
 
 
-def hello(taskq, flag):
-    for i in range(1000):
-        taskq.put(i)
-        if i % 100 == 0:
-            time.sleep(2)
-    flag.get()
+class B(A):
+    def __init__(self):
+        super(B, self).__init__()
+
+    def f(self):
+        return 6
 
 
-def main():
-    taskq = multiprocessing.Queue()
-    flag = multiprocessing.Queue()
-    flag.put(True)
-    p = multiprocessing.Process(target=hello, args=(taskq, flag))
-    p.start()
-
-    while not flag.empty() or not taskq.empty():
-        t1 = time.perf_counter()
-        name = taskq.get(True)
-        t2 = time.perf_counter()
-        if name % 100 == 0:
-            time.sleep(1)
-        print(t2 - t1, name)
-
-    p.join()
-
-
-if __name__ == '__main__':
-    main()
+a = A()
+b = B()
+print(a.a)
+print(b.a)

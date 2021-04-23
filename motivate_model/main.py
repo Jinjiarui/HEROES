@@ -145,7 +145,7 @@ def main(args):
         flag = Queue()
         flag.put(True)
         Pw = Process(target=write,
-                     args=(q, flag, te_files, args['dataset'], args['batch_size'], args['seq_max_len']))
+                     args=(q, flag, te_files, args['dataset'], 5 * args['batch_size'], args['seq_max_len']))
         Pw.start()
         all_result = [0] * 7
         while not q.empty() or not flag.empty():

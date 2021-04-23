@@ -9,6 +9,7 @@ configure_list['Criteo']['Heroes'] = {
     'batch_size': 100,
     'keep_prob': 0.5,
     'prediction_embed_list': '64,32,16',
+    'decay_step': 8000,
     'lr': 1e-2,
     'click_weight': 0.5,
     'conversion_weight': 0.1,
@@ -23,6 +24,7 @@ configure_list['alicpp']['Heroes'] = {
     'batch_size': 50,
     'keep_prob': 0.5,
     'prediction_embed_list': '64,32,16',
+    'decay_step': 400,
     'lr': 1e-2,
     'click_weight': 0.14,
     'conversion_weight': 0.023,
@@ -38,6 +40,7 @@ configure_list['Criteo']['motivate'] = {
     'batch_size': 100,
     'keep_prob': 0.5,
     'prediction_embed_list': '64,32,16',
+    'decay_step': 8000,
     'lr': 1e-2,
     'click_weight': 0.5,
     'conversion_weight': 0.1,
@@ -50,13 +53,15 @@ configure_list['alicpp']['motivate'] = {
     'n_hidden': 128,
     'n_classes': 1,
     'batch_size': 50,
-    'keep_prob': 0.5,
+    'keep_prob': 0.4,
     'prediction_embed_list': '64,32,16',
-    'lr': 1e-2,
+    'decay_step': 400,
+    'lr': 5e-2,
     'click_weight': 0.14,
     'conversion_weight': 0.023,
-    'l2_reg': 1e-2
+    'l2_reg': 1e-1
 }
+
 
 def get_exp_configure(args):
     return configure_list[args['dataset']][args['model']]

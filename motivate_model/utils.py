@@ -25,6 +25,7 @@ def load_model(placeholders, args):
                              n_classes=args['n_classes'],
                              keep_prob=args['keep_prob'],
                              prediction_embed_list=[int(i) for i in args['prediction_embed_list'].split(',')],
+                             decay_step=args['decay_step'],
                              lr=args['lr'],
                              click_weight=args['click_weight'],
                              conversion_weight=args['conversion_weight'],
