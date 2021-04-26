@@ -17,6 +17,8 @@ def sparse_tuple_from(sequences, dtype=np.int32):
 
 
 def load_model(placeholders, args):
+    time_stamp = 'time_stamp' not in args.keys()
+    position_embed = 'position_embed' not in args.keys()
     model = full_model.Model(placeholders,
                              embedding_size=args['embedding_size'],
                              seq_max_len=args['seq_max_len'],
@@ -31,6 +33,8 @@ def load_model(placeholders, args):
                              conversion_weight=args['conversion_weight'],
                              ctr_task_wgt=args['ctr_task_wgt'],
                              l2_reg=args['l2_reg'],
+                             position_embed=position_embed,
+                             time_stamp=time_stamp,
                              model_name=args['model'],
                              dataset_name=args['dataset'])
 

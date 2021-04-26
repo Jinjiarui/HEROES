@@ -10,31 +10,31 @@ class Heroes(tf.keras.layers.Layer):
         self.dense_layer = {}
         for i in dense_layer_name:
             if i[0] == 'x':
-                self.dense_layer[i] = tf.keras.layers.Dense(input_shape=[None, embedding_size], units=n_hidden,
+                self.dense_layer[i] = tf.keras.layers.Dense(input_dim=embedding_size, units=n_hidden,
                                                             use_bias=True,
                                                             kernel_initializer='random_normal', name=i)
-            elif i[0] == 'h' or i[0] == 's':
-                self.dense_layer[i] = tf.keras.layers.Dense(input_shape=[None, n_hidden], units=n_hidden,
+            else:
+                self.dense_layer[i] = tf.keras.layers.Dense(input_dim=n_hidden, units=n_hidden,
                                                             use_bias=False,
                                                             kernel_initializer='random_normal', name=i)
         self.drop_out = tf.keras.layers.Dropout(rate=1 - keep_prob)
         self.activate = tf.keras.layers.LeakyReLU()
         self.prediction_c = [
-            tf.keras.layers.Dense(input_shape=[None, n_hidden], units=prediction_embed_list[0], use_bias=True,
+            tf.keras.layers.Dense(input_dim=n_hidden, units=prediction_embed_list[0], use_bias=True,
                                   kernel_initializer='random_normal', name='pc_0')]
         self.prediction_v = [
-            tf.keras.layers.Dense(input_shape=[None, n_hidden], units=prediction_embed_list[0], use_bias=True,
+            tf.keras.layers.Dense(input_dim=n_hidden, units=prediction_embed_list[0], use_bias=True,
                                   kernel_initializer='random_normal', name='pv_0')]
         for i in range(1, len(prediction_embed_list)):
             self.prediction_c.append(
-                tf.keras.layers.Dense(input_shape=[None, prediction_embed_list[i - 1]], units=prediction_embed_list[i],
+                tf.keras.layers.Dense(input_dim=prediction_embed_list[i - 1], units=prediction_embed_list[i],
                                       use_bias=True, kernel_initializer='random_normal', name='pc_{}'.format(i)))
             self.prediction_v.append(
-                tf.keras.layers.Dense(input_shape=[None, prediction_embed_list[i - 1]], units=prediction_embed_list[i],
+                tf.keras.layers.Dense(input_dim=prediction_embed_list[i - 1], units=prediction_embed_list[i],
                                       use_bias=True, kernel_initializer='random_normal', name='pv_{}'.format(i)))
-        self.fc_c = tf.keras.layers.Dense(input_shape=[None, prediction_embed_list[-1]], units=n_classes,
+        self.fc_c = tf.keras.layers.Dense(input_dim=prediction_embed_list[- 1], units=n_classes,
                                           use_bias=True, kernel_initializer='random_normal', name='fc_c')
-        self.fc_v = tf.keras.layers.Dense(input_shape=[None, prediction_embed_list[-1]], units=n_classes,
+        self.fc_v = tf.keras.layers.Dense(input_dim=prediction_embed_list[- 1], units=n_classes,
                                           use_bias=True, kernel_initializer='random_normal', name='fc_v')
 
     def get_dense_name(self):
@@ -165,9 +165,9 @@ class motivate_model(Heroes):
 
 
 class motivate_single(motivate_model):
-    def __int__(self, embedding_size, seq_max_len, n_hidden, n_classes, keep_prob, prediction_embed_list):
-        super(motivate_single, self).__int__(embedding_size, seq_max_len, n_hidden, n_classes, keep_prob,
-                                             prediction_embed_list)
+    def __init__(self, embedding_size, seq_max_len, n_hidden, n_classes, keep_prob, prediction_embed_list):
+        super(motivate_single, self).__init__(embedding_size, seq_max_len, n_hidden, n_classes, keep_prob,
+                                              prediction_embed_list)
 
     def get_dense_name(self):
         dense_layer_name = ['xfc', 'hfc', 'xic', 'hic', 'xoc', 'hoc', 'xzc', 'hzc', 'xtc', 'htc',
@@ -210,3 +210,197 @@ class motivate_single(motivate_model):
                 prediction_c.append(h_c_p)
                 prediction_v.append(h_c_p * h_v_p)
         return prediction_c, prediction_v
+
+
+class LSTM(Heroes):
+    def __init__(self, embedding_size, seq_max_len, n_hidden, n_classes, keep_prob, prediction_embed_list):
+        super(LSTM, self).__init__(embedding_size, seq_max_len, n_hidden, n_classes, keep_prob,
+                                   prediction_embed_list)
+
+    def get_dense_name(self):
+        dense_layer_name = ['xfc', 'hfc', 'xic', 'hic', 'xoc', 'hoc', 'xzc', 'hzc',
+                            'xfv', 'hfv', 'xiv', 'hiv', 'xov', 'hov', 'xzv', 'hzv']
+        return dense_layer_name
+
+    def call(self, inputs, **kwargs):
+        with tf.name_scope('RNN'), tf.variable_scope("RNN", reuse=tf.AUTO_REUSE):
+            h_c = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))  # (bs,hidden)
+            h_v = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))  # (bs,hidden)
+            c_c = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))
+            c_v = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))
+            prediction_c = []
+            prediction_v = []
+            for i in range(self.seq_max_len):
+                i_c = tf.sigmoid(self.dense_layer['xic'](inputs[i]) + self.dense_layer['hic'](h_c))
+                f_c = tf.sigmoid(self.dense_layer['xfc'](inputs[i]) + self.dense_layer['hfc'](h_c))
+                o_c = tf.sigmoid(self.dense_layer['xoc'](inputs[i]) + self.dense_layer['hoc'](h_c))
+                z_c = tf.tanh(self.dense_layer['xzc'](inputs[i]) + self.dense_layer['hzc'](h_c))
+
+                c_c = f_c * c_c + i_c * z_c
+                h_c = o_c * tf.tanh(c_c)
+
+                i_v = tf.sigmoid(self.dense_layer['xiv'](inputs[i]) + self.dense_layer['hiv'](h_v))
+                f_v = tf.sigmoid(self.dense_layer['xfv'](inputs[i]) + self.dense_layer['hfv'](h_v))
+                o_v = tf.sigmoid(self.dense_layer['xov'](inputs[i]) + self.dense_layer['hov'](h_v))
+                z_v = tf.tanh(self.dense_layer['xzv'](inputs[i]) + self.dense_layer['hzv'](h_v))
+                c_v = f_v * c_v + i_v * z_v
+                h_v = o_v * tf.tanh(c_v)
+
+                h_c_p = self.predict_call(h_c, target='c')
+                h_v_p = self.predict_call(h_v, target='v')
+                prediction_c.append(h_c_p)
+                prediction_v.append(h_c_p * h_v_p)
+        return prediction_c, prediction_v
+
+
+class time_LSTM(Heroes):
+    def __init__(self, embedding_size, seq_max_len, n_hidden, n_classes, keep_prob, prediction_embed_list,
+                 dataset_name):
+        super(time_LSTM, self).__init__(embedding_size, seq_max_len, n_hidden, n_classes, keep_prob,
+                                        prediction_embed_list)
+        self.dataset_name = dataset_name
+
+    def get_dense_name(self):
+        dense_layer_name = ['xfc', 'hfc', 'xic', 'hic', 'xoc', 'hoc', 'xzc', 'hzc',
+                            'xfv', 'hfv', 'xiv', 'hiv', 'xov', 'hov', 'xzv', 'hzv']
+        dense_layer_name += ['xtc', 'cic', 'ttc', 'toc', 'cfc', 'coc',
+                             'xtv', 'civ', 'ttv', 'tov', 'cfv', 'cov']
+        return dense_layer_name
+
+    def call(self, inputs, **kwargs):
+        if self.dataset_name == 'Criteo':
+            time_stamp, inputs = inputs[:, :, 0], inputs[:, :, 1:]
+            time_stamp = tf.expand_dims(time_stamp, -1)
+        else:
+            inputs, time_stamp = tf.split(inputs, 2, 2)
+        with tf.name_scope('RNN'), tf.variable_scope("RNN", reuse=tf.AUTO_REUSE):
+            h_c = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))  # (bs,hidden)
+            h_v = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))  # (bs,hidden)
+            c_c = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))
+            c_v = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))
+            prediction_c = []
+            prediction_v = []
+            for i in range(self.seq_max_len):
+                i_c = tf.sigmoid(
+                    self.dense_layer['xic'](inputs[i]) + self.dense_layer['hic'](h_c) + self.dense_layer['cic'](c_c))
+                f_c = tf.sigmoid(
+                    self.dense_layer['xfc'](inputs[i]) + self.dense_layer['hfc'](h_c) + self.dense_layer['cfc'](c_c))
+                t_c = tf.sigmoid(
+                    self.dense_layer['xtc'](inputs[i]) + tf.sigmoid(self.dense_layer['ttc'](time_stamp[i])))
+                z_c = tf.tanh(self.dense_layer['xzc'](inputs[i]) + self.dense_layer['hzc'](h_c))
+
+                c_c = f_c * c_c + i_c * t_c * z_c
+                o_c = tf.sigmoid(
+                    self.dense_layer['xoc'](inputs[i]) + self.dense_layer['toc'](time_stamp[i]) +
+                    self.dense_layer['hoc'](h_c) + self.dense_layer['coc'](c_c))
+                h_c = o_c * tf.tanh(c_c)
+
+                i_v = tf.sigmoid(
+                    self.dense_layer['xiv'](inputs[i]) + self.dense_layer['hiv'](h_v) + self.dense_layer['civ'](c_v))
+                f_v = tf.sigmoid(
+                    self.dense_layer['xfv'](inputs[i]) + self.dense_layer['hfv'](h_v) + self.dense_layer['cfv'](c_v))
+                t_v = tf.sigmoid(
+                    self.dense_layer['xtv'](inputs[i]) + tf.sigmoid(self.dense_layer['ttv'](time_stamp[i])))
+                z_v = tf.tanh(self.dense_layer['xzv'](inputs[i]) + self.dense_layer['hzv'](h_v))
+
+                c_v = f_v * c_v + i_v * t_v * z_v
+                o_v = tf.sigmoid(
+                    self.dense_layer['xov'](inputs[i]) + self.dense_layer['tov'](time_stamp[i]) +
+                    self.dense_layer['hov'](h_v) + self.dense_layer['cov'](c_v))
+                h_v = o_v * tf.tanh(c_v)
+
+                h_c_p = self.predict_call(h_c, target='c')
+                h_v_p = self.predict_call(h_v, target='v')
+                prediction_c.append(h_c_p)
+                prediction_v.append(h_c_p * h_v_p)
+        return prediction_c, prediction_v
+
+
+class STAMP(tf.keras.layers.Layer):
+    def __init__(self, embedding_size, seq_max_len, n_hidden, keep_prob, prediction_embed_list):
+        super(STAMP, self).__init__()
+        self.n_hidden = n_hidden
+        self.seq_max_len = seq_max_len
+        self.drop_out = tf.keras.layers.Dropout(rate=1 - keep_prob)
+        self.activate = tf.keras.layers.LeakyReLU()
+        self.w0 = tf.keras.layers.Dense(input_dim=n_hidden, units=1, use_bias=False,
+                                        kernel_initializer='random_normal', name='w1')
+        self.w1 = tf.keras.layers.Dense(input_dim=embedding_size, units=n_hidden, use_bias=True,
+                                        kernel_initializer='random_normal', name='w1')
+        self.w2 = tf.keras.layers.Dense(input_dim=embedding_size, units=n_hidden, use_bias=False,
+                                        kernel_initializer='random_normal', name='w2')
+        self.w3 = tf.keras.layers.Dense(input_dim=embedding_size, units=n_hidden, use_bias=False,
+                                        kernel_initializer='random_normal', name='w3')
+        self.prediction_c = [
+            [tf.keras.layers.Dense(input_dim=embedding_size, units=prediction_embed_list[0], use_bias=True,
+                                   kernel_initializer='random_normal', name='pc_0'),
+             tf.keras.layers.Dense(input_dim=embedding_size, units=prediction_embed_list[0], use_bias=True,
+                                   kernel_initializer='random_normal', name='pc_0_')
+             ]]
+        self.prediction_v = [
+            [tf.keras.layers.Dense(input_dim=n_hidden, units=prediction_embed_list[0], use_bias=True,
+                                   kernel_initializer='random_normal', name='pv_0'),
+             tf.keras.layers.Dense(input_dim=n_hidden, units=prediction_embed_list[0], use_bias=True,
+                                   kernel_initializer='random_normal', name='pv_0_')]
+        ]
+        for i in range(1, len(prediction_embed_list)):
+            self.prediction_c.append(
+                [tf.keras.layers.Dense(input_dim=prediction_embed_list[i - 1], units=prediction_embed_list[i],
+                                       use_bias=True, kernel_initializer='random_normal', name='pc_{}'.format(i)),
+                 tf.keras.layers.Dense(input_dim=prediction_embed_list[i - 1], units=prediction_embed_list[i],
+                                       use_bias=True, kernel_initializer='random_normal', name='pc_{}_'.format(i)),
+                 ])
+            self.prediction_v.append(
+                [tf.keras.layers.Dense(input_dim=prediction_embed_list[i - 1], units=prediction_embed_list[i],
+                                       use_bias=True, kernel_initializer='random_normal', name='pv_{}'.format(i)),
+                 tf.keras.layers.Dense(input_dim=prediction_embed_list[i - 1], units=prediction_embed_list[i],
+                                       use_bias=True, kernel_initializer='random_normal', name='pv_{}_'.format(i)),
+                 ])
+
+    def predict_call(self, inputs, target):
+        inputs1, inputs2 = inputs
+        if target == 'c':
+            predict_layers = self.prediction_c
+        else:
+            predict_layers = self.prediction_v
+        for i in range(len(predict_layers)):
+            inputs1 = predict_layers[i][0](inputs1)
+            inputs1 = self.activate(inputs1)
+            inputs1 = self.drop_out(inputs1)
+
+            inputs2 = predict_layers[i][1](inputs2)
+            inputs2 = self.activate(inputs2)
+            inputs2 = self.drop_out(inputs2)
+        return tf.sigmoid(tf.reduce_sum(inputs1 * inputs2, -1, keep_dims=True))
+
+    def call(self, inputs, **kwargs):
+        m_s = tf.cumsum(inputs) / tf.reshape(tf.range(self.seq_max_len, dtype=tf.float32) + 1, (-1, 1, 1))
+        x1 = self.w1(inputs)
+        x2 = self.w2(inputs)
+        wms = self.w3(m_s)
+        m_a = tf.map_fn(lambda i: tf.reduce_sum(
+            self.w0(tf.sigmoid(x1[:i + 1] + x2[i:i + 1] + wms[i:i + 1])) * inputs[:i + 1], axis=0),
+                        tf.range(self.seq_max_len), dtype=inputs.dtype)
+        prediction_c = self.predict_call([m_a, inputs], 'c')
+        prediction_v = self.predict_call([m_a, inputs], 'v')
+        prediction_v *= prediction_c
+        return prediction_c, prediction_v
+
+
+class NARM(tf.keras.layers.Layer):
+
+    def __init__(self, embedding_size, seq_max_len, n_hidden, keep_prob, prediction_embed_list):
+        super(NARM, self).__init__()
+        self.n_hidden = n_hidden
+        self.seq_max_len = seq_max_len
+        self.drop_out = tf.keras.layers.Dropout(rate=1 - keep_prob)
+        self.activate = tf.keras.layers.LeakyReLU()
+        self.A1 = tf.keras.layers.Dense(input_dim=n_hidden, units=n_hidden, use_bias=False,
+                                        kernel_initializer='random_normal', name='A1')
+        self.A2 = tf.keras.layers.Dense(input_dim=n_hidden, units=n_hidden, use_bias=False,
+                                        kernel_initializer='random_normal', name='A1')
+        self.GRU_c = tf.keras.layers.GRU(units=n_hidden, input_dim=embedding_size, return_sequences=True)
+        self.GRU_v = tf.keras.layers.GRU(units=n_hidden, input_dim=embedding_size, return_sequences=True)
+
+    def call(self, inputs, **kwargs):
+        h_c = self.GRU_c(inputs)

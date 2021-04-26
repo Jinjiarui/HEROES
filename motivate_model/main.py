@@ -169,7 +169,9 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Unbiased learning")
     parser.add_argument(
-        "-m", "--model", type=str, choices=['motivate', "Heroes"], default="motivate", help="Model to use"
+        "-m", "--model", type=str, choices=['motivate', "Heroes", 'motivate-single', 'RRN', 'time_LSTM','STAMP'],
+        default="motivate-single",
+        help="Model to use"
     )
     parser.add_argument('-d', '--dataset', type=str, choices=["Criteo", "alicpp"], default="Criteo",
                         help="Dataset to use")

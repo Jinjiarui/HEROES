@@ -1,20 +1,9 @@
-class A(object):
-    def __init__(self):
-        self.a = self.f()
+import tensorflow as tf
+from tensorflow.keras import backend as K
+import numpy as np
 
-    def f(self):
-        return 10
+l = tf.convert_to_tensor(np.random.normal(size=(100, 10, 10)),dtype=tf.float32)
+gru = tf.keras.layers.GRU(units=4,time_major=True,return_sequences=True)
 
-
-class B(A):
-    def __init__(self):
-        super(B, self).__init__()
-
-    def f(self):
-        return 6
-
-
-a = A()
-b = B()
-print(a.a)
-print(b.a)
+print(l)
+print(gru(l))
