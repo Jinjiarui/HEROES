@@ -1,29 +1,17 @@
 import tensorflow as tf
 
 
-class Heroes(tf.keras.layers.Layer):
-    def __init__(self, embedding_size, seq_max_len, n_hidden, n_classes, keep_prob, prediction_embed_list):
-        super(Heroes, self).__init__()
-        self.n_hidden = n_hidden
-        self.seq_max_len = seq_max_len
-        dense_layer_name = self.get_dense_name()
-        self.dense_layer = {}
-        for i in dense_layer_name:
-            if i[0] == 'x':
-                self.dense_layer[i] = tf.keras.layers.Dense(input_dim=embedding_size, units=n_hidden,
-                                                            use_bias=True,
-                                                            kernel_initializer='random_normal', name=i)
-            else:
-                self.dense_layer[i] = tf.keras.layers.Dense(input_dim=n_hidden, units=n_hidden,
-                                                            use_bias=False,
-                                                            kernel_initializer='random_normal', name=i)
+class HeroesCell(tf.keras.layers.Layer):
+    def __init__(self, units, state_num, n_classes, keep_prob, prediction_embed_list, **kwargs):
+        self.units = units
+        self.state_size = [self.units] * state_num
         self.drop_out = tf.keras.layers.Dropout(rate=1 - keep_prob)
         self.activate = tf.keras.layers.LeakyReLU()
         self.prediction_c = [
-            tf.keras.layers.Dense(input_dim=n_hidden, units=prediction_embed_list[0], use_bias=True,
+            tf.keras.layers.Dense(input_dim=units, units=prediction_embed_list[0], use_bias=True,
                                   kernel_initializer='random_normal', name='pc_0')]
         self.prediction_v = [
-            tf.keras.layers.Dense(input_dim=n_hidden, units=prediction_embed_list[0], use_bias=True,
+            tf.keras.layers.Dense(input_dim=units, units=prediction_embed_list[0], use_bias=True,
                                   kernel_initializer='random_normal', name='pv_0')]
         for i in range(1, len(prediction_embed_list)):
             self.prediction_c.append(
@@ -32,16 +20,11 @@ class Heroes(tf.keras.layers.Layer):
             self.prediction_v.append(
                 tf.keras.layers.Dense(input_dim=prediction_embed_list[i - 1], units=prediction_embed_list[i],
                                       use_bias=True, kernel_initializer='random_normal', name='pv_{}'.format(i)))
-        self.fc_c = tf.keras.layers.Dense(input_dim=prediction_embed_list[- 1], units=n_classes,
+        self.fc_c = tf.keras.layers.Dense(input_dim=prediction_embed_list[-1], units=n_classes,
                                           use_bias=True, kernel_initializer='random_normal', name='fc_c')
-        self.fc_v = tf.keras.layers.Dense(input_dim=prediction_embed_list[- 1], units=n_classes,
+        self.fc_v = tf.keras.layers.Dense(input_dim=prediction_embed_list[-1], units=n_classes,
                                           use_bias=True, kernel_initializer='random_normal', name='fc_v')
-
-    def get_dense_name(self):
-        dense_layer_name = ['xfc', 'hfc', 'xic', 'hic', 'xoc', 'hoc', 'xgc', 'hgc',
-                            'xfv', 'hfv', 'xiv', 'hiv', 'xov', 'hov', 'xgv', 'hgv']
-        dense_layer_name += ['s_c_hat_c', 's_c_hat_v', 's_v_hat_v', 's_v_hat_c']
-        return dense_layer_name
+        super(HeroesCell, self).__init__(**kwargs)
 
     def predict_call(self, inputs, target):
         if target == 'c':
@@ -56,62 +39,60 @@ class Heroes(tf.keras.layers.Layer):
             inputs = self.drop_out(inputs)
         return tf.sigmoid(fc(inputs))
 
-    def call(self, inputs, **kwargs):
-        click_label = None
-        if isinstance(inputs, list):
-            inputs, click_label = inputs
-            click_label = tf.transpose(click_label, [1, 0, 2])  # (seq,bs,n_class)
-        with tf.name_scope('RNN'), tf.variable_scope("RNN", reuse=tf.AUTO_REUSE):
-            H_c = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))  # (bs,hidden)
-            H_v = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))  # (bs,hidden)
-            s_c = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))  # (bs,hidden)
-            s_v = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))  # (bs,hidden)
-            prediction_c = []
-            prediction_v = []
-            g = self.predict_call(H_c, 'c')
-            pc = tf.ones_like(g)  # The product of 1-H_c
-            pv = tf.ones_like(g)  # The product of 1-H_v
-            g = tf.tile(g, [1, self.n_hidden])  # (bs,hidden)
-            for i in range(self.seq_max_len):
-                f_c = tf.sigmoid(self.dense_layer['xfc'](inputs[i]) + self.dense_layer['hfc'](H_c))
-                i_c = tf.sigmoid(self.dense_layer['xic'](inputs[i]) + self.dense_layer['hic'](H_c))
-                o_c = tf.sigmoid(self.dense_layer['xoc'](inputs[i]) + self.dense_layer['hoc'](H_c))
-                g_c = tf.tanh(self.dense_layer['xgc'](inputs[i]) + self.dense_layer['hgc'](H_c))
-                s_c_hat = tf.tanh(tf.multiply(1 - g, self.dense_layer['s_c_hat_c'](H_c)) \
-                                  + tf.multiply(g, self.dense_layer['s_c_hat_v'](H_v)))
-                s_c = s_c_hat + tf.multiply(i_c, g_c) + tf.multiply(1 - g, tf.multiply(f_c, s_c))
-                H_c = tf.multiply(o_c, tf.tanh(s_c))
-                H_c_p = self.predict_call(H_c, 'c')
-                prediction_c.append(H_c_p)
-                if click_label is not None:
-                    g = tf.where(click_label[i] >= 0.5, tf.ones_like(prediction_c[-1]), tf.zeros_like(prediction_c[-1]))
-                    pc = tf.where(click_label[i] >= 0.5, tf.ones_like(prediction_c[-1]), tf.multiply(1 - H_c_p, pc))
-                else:
-                    g = H_c_p
-                    pc = tf.where(prediction_c[-1] >= 0.5, tf.ones_like(prediction_c[-1]), tf.multiply(1 - H_c_p, pc))
-                g = tf.tile(g, [1, self.n_hidden])
+    def get_dense_name(self):
+        dense_layer_name = ['xfc', 'hfc', 'xic', 'hic', 'xoc', 'hoc', 'xgc', 'hgc',
+                            'xfv', 'hfv', 'xiv', 'hiv', 'xov', 'hov', 'xgv', 'hgv']
+        dense_layer_name += ['s_c_hat_c', 's_c_hat_v', 's_v_hat_v', 's_v_hat_c']
+        return dense_layer_name
 
-                f_v = tf.sigmoid(self.dense_layer['xfv'](inputs[i]) + self.dense_layer['hfv'](H_c))
-                i_v = tf.sigmoid(self.dense_layer['xiv'](inputs[i]) + self.dense_layer['hiv'](H_c))
-                o_v = tf.sigmoid(self.dense_layer['xov'](inputs[i]) + self.dense_layer['hov'](H_c))
-                g_v = tf.tanh(self.dense_layer['xgv'](inputs[i]) + self.dense_layer['hgv'](H_c))
-                s_v_hat = tf.tanh(self.dense_layer['s_v_hat_v'](H_v) \
-                                  + tf.multiply(g, self.dense_layer['s_v_hat_c'](H_c)))
-                s_v = s_v_hat + tf.multiply(1 - g, s_v) + tf.multiply(g, tf.multiply(f_v, s_v) + tf.multiply(i_v, g_v))
-                H_v = tf.multiply(1 - g, H_v) + tf.multiply(g, tf.multiply(o_v, tf.tanh(s_v)))
-                H_v_p = self.predict_call(H_v, 'v') * H_c_p
-                prediction_v.append(H_v_p)
-                if click_label is not None:
-                    pv = tf.where(click_label[-1] >= 0.5, tf.ones_like(prediction_v[-1]), tf.multiply(1 - H_v_p, pv))
-                else:
-                    pv = tf.where(prediction_c[-1] >= 0.5, tf.ones_like(prediction_v[-1]), tf.multiply(1 - H_v_p, pv))
-        return prediction_c, prediction_v
+    def build(self, input_shape):
+        dense_layer_name = self.get_dense_name()
+        self.dense_layer = {}
+        for i in dense_layer_name:
+            if i[0] == 'x':
+                self.dense_layer[i] = tf.keras.layers.Dense(units=self.units,
+                                                            use_bias=True,
+                                                            kernel_initializer='random_normal', name=i)
+            else:
+                self.dense_layer[i] = tf.keras.layers.Dense(units=self.units,
+                                                            use_bias=False,
+                                                            kernel_initializer='random_normal', name=i)
+        self.built = True
+
+    def call(self, inputs, states):
+        inputs, click_label = inputs[:, :-1], inputs[:, -1:]
+        H_c = states[0]
+        H_v = states[1]
+        s_c = states[2]
+        s_v = states[3]
+        g = states[4]
+
+        f_c = tf.sigmoid(self.dense_layer['xfc'](inputs) + self.dense_layer['hfc'](H_c))
+        i_c = tf.sigmoid(self.dense_layer['xic'](inputs) + self.dense_layer['hic'](H_c))
+        o_c = tf.sigmoid(self.dense_layer['xoc'](inputs) + self.dense_layer['hoc'](H_c))
+        g_c = tf.tanh(self.dense_layer['xgc'](inputs) + self.dense_layer['hgc'](H_c))
+        s_c_hat = tf.tanh(tf.multiply(1 - g, self.dense_layer['s_c_hat_c'](H_c)) \
+                          + tf.multiply(g, self.dense_layer['s_c_hat_v'](H_v)))
+        s_c = s_c_hat + tf.multiply(i_c, g_c) + tf.multiply(1 - g, tf.multiply(f_c, s_c))
+        H_c = tf.multiply(o_c, tf.tanh(s_c))
+        H_c_p = self.predict_call(H_c, 'c')
+        g = tf.where(click_label >= 0.5, tf.ones_like(H_c_p), tf.zeros_like(H_c_p))
+        g = tf.tile(g, [1, self.units])
+        f_v = tf.sigmoid(self.dense_layer['xfv'](inputs) + self.dense_layer['hfv'](H_v))
+        i_v = tf.sigmoid(self.dense_layer['xiv'](inputs) + self.dense_layer['hiv'](H_v))
+        o_v = tf.sigmoid(self.dense_layer['xov'](inputs) + self.dense_layer['hov'](H_v))
+        g_v = tf.tanh(self.dense_layer['xgv'](inputs) + self.dense_layer['hgv'](H_v))
+        s_v_hat = tf.tanh(self.dense_layer['s_v_hat_v'](H_v) \
+                          + tf.multiply(g, self.dense_layer['s_v_hat_c'](H_c)))
+        s_v = s_v_hat + tf.multiply(1 - g, s_v) + tf.multiply(g, tf.multiply(f_v, s_v) + tf.multiply(i_v, g_v))
+        H_v = tf.multiply(1 - g, H_v) + tf.multiply(g, tf.multiply(o_v, tf.tanh(s_v)))
+        H_v_p = self.predict_call(H_v, 'v') * H_c_p
+        return [H_c_p, H_v_p], [H_c, H_v, s_c, s_v, g]
 
 
-class motivate_model(Heroes):
-    def __init__(self, embedding_size, seq_max_len, n_hidden, n_classes, keep_prob, prediction_embed_list):
-        super(motivate_model, self).__init__(embedding_size, seq_max_len, n_hidden, n_classes, keep_prob,
-                                             prediction_embed_list)
+class Motivate_cell(HeroesCell):
+    def __init__(self, units, state_num, n_classes, keep_prob, prediction_embed_list):
+        super(Motivate_cell, self).__init__(units, state_num, n_classes, keep_prob, prediction_embed_list)
         self.intensity_fun = lambda x: 5 / (1 + tf.exp(-x / 5))
 
     def get_dense_name(self):
@@ -120,54 +101,43 @@ class motivate_model(Heroes):
         dense_layer_name += ['xfc_hat', 'hfc_hat', 'xic_hat', 'hic_hat', 'xfv_hat', 'hfv_hat', 'xiv_hat', 'hiv_hat']
         return dense_layer_name
 
-    def call(self, inputs, **kwargs):
-        with tf.name_scope('RNN'), tf.variable_scope("RNN", reuse=tf.AUTO_REUSE):
-            h_c = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))  # (bs,hidden)
-            h_v = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))  # (bs,hidden)
-            c_c = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))
-            c_v = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))
-            c_c_hat = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))
-            c_v_hat = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))
-            prediction_c = []
-            prediction_v = []
-            for i in range(self.seq_max_len):
-                i_c = tf.sigmoid(self.dense_layer['xic'](inputs[i]) + self.dense_layer['hic'](h_c))
-                i_c_hat = tf.sigmoid(self.dense_layer['xic_hat'](inputs[i]) + self.dense_layer['hic_hat'](h_c))
-                f_c = tf.sigmoid(self.dense_layer['xfc'](inputs[i]) + self.dense_layer['hfc'](h_c))
-                f_c_hat = tf.sigmoid(self.dense_layer['xfc_hat'](inputs[i]) + self.dense_layer['hfc_hat'](h_c))
-                o_c = tf.sigmoid(self.dense_layer['xoc'](inputs[i]) + self.dense_layer['hoc'](h_c))
-                z_c = tf.tanh(self.dense_layer['xzc'](inputs[i]) + self.dense_layer['hzc'](h_c))
-                t_c = self.intensity_fun(self.dense_layer['xtc'](inputs[i]) + self.dense_layer['htc'](h_c))
+    def call(self, inputs, states):
+        h_c, h_v, c_c, c_v, c_c_hat, c_v_hat = states[0], states[1], states[2], states[3], states[4], states[5]
+        i_c = tf.sigmoid(self.dense_layer['xic'](inputs) + self.dense_layer['hic'](h_c))
+        i_c_hat = tf.sigmoid(self.dense_layer['xic_hat'](inputs) + self.dense_layer['hic_hat'](h_c))
+        f_c = tf.sigmoid(self.dense_layer['xfc'](inputs) + self.dense_layer['hfc'](h_c))
+        f_c_hat = tf.sigmoid(self.dense_layer['xfc_hat'](inputs) + self.dense_layer['hfc_hat'](h_c))
+        o_c = tf.sigmoid(self.dense_layer['xoc'](inputs) + self.dense_layer['hoc'](h_c))
+        z_c = tf.tanh(self.dense_layer['xzc'](inputs) + self.dense_layer['hzc'](h_c))
+        t_c = self.intensity_fun(self.dense_layer['xtc'](inputs) + self.dense_layer['htc'](h_c))
 
-                c_t_c = c_c_hat + (c_c - c_c_hat) * tf.exp(-t_c)
-                h_c = o_c * tf.tanh(c_t_c)
-                c_c = f_c * c_t_c + i_c * z_c
-                c_c_hat = f_c_hat * c_c_hat + i_c_hat * z_c
+        c_t_c = c_c_hat + (c_c - c_c_hat) * tf.exp(-t_c)
+        h_c = o_c * tf.tanh(c_t_c)
+        c_c = f_c * c_t_c + i_c * z_c
+        c_c_hat = f_c_hat * c_c_hat + i_c_hat * z_c
 
-                i_v = tf.sigmoid(self.dense_layer['xiv'](inputs[i]) + self.dense_layer['hiv'](h_v))
-                i_v_hat = tf.sigmoid(self.dense_layer['xiv_hat'](inputs[i]) + self.dense_layer['hiv_hat'](h_v))
-                f_v = tf.sigmoid(self.dense_layer['xfv'](inputs[i]) + self.dense_layer['hfv'](h_v))
-                f_v_hat = tf.sigmoid(self.dense_layer['xfv_hat'](inputs[i]) + self.dense_layer['hfv_hat'](h_v))
-                o_v = tf.sigmoid(self.dense_layer['xov'](inputs[i]) + self.dense_layer['hov'](h_v))
-                z_v = tf.tanh(self.dense_layer['xzv'](inputs[i]) + self.dense_layer['hzv'](h_v))
-                t_v = self.intensity_fun(self.dense_layer['xtv'](inputs[i]) + self.dense_layer['htv'](h_v))
+        i_v = tf.sigmoid(self.dense_layer['xiv'](inputs) + self.dense_layer['hiv'](h_v))
+        i_v_hat = tf.sigmoid(self.dense_layer['xiv_hat'](inputs) + self.dense_layer['hiv_hat'](h_v))
+        f_v = tf.sigmoid(self.dense_layer['xfv'](inputs) + self.dense_layer['hfv'](h_v))
+        f_v_hat = tf.sigmoid(self.dense_layer['xfv_hat'](inputs) + self.dense_layer['hfv_hat'](h_v))
+        o_v = tf.sigmoid(self.dense_layer['xov'](inputs) + self.dense_layer['hov'](h_v))
+        z_v = tf.tanh(self.dense_layer['xzv'](inputs) + self.dense_layer['hzv'](h_v))
+        t_v = self.intensity_fun(self.dense_layer['xtv'](inputs) + self.dense_layer['htv'](h_v))
 
-                c_t_v = c_v_hat + (c_v - c_v_hat) * tf.exp(-t_v)
-                h_v = o_v * tf.tanh(c_t_v)
-                c_v = f_v * c_t_v + i_v * z_v
-                c_v_hat = f_v_hat * c_v_hat + i_v_hat * z_v
+        c_t_v = c_v_hat + (c_v - c_v_hat) * tf.exp(-t_v)
+        h_v = o_v * tf.tanh(c_t_v)
+        c_v = f_v * c_t_v + i_v * z_v
+        c_v_hat = f_v_hat * c_v_hat + i_v_hat * z_v
 
-                h_c_p = self.predict_call(h_c, target='c')
-                h_v_p = self.predict_call(h_v, target='v')
-                prediction_c.append(h_c_p)
-                prediction_v.append(h_c_p * h_v_p)
-        return prediction_c, prediction_v
+        h_c_p = self.predict_call(h_c, target='c')
+        h_v_p = self.predict_call(h_v, target='v')
+        return [h_c_p, h_c_p * h_v_p], [h_c, h_v, c_c, c_v, c_c_hat, c_v_hat]
 
 
-class motivate_single(motivate_model):
-    def __init__(self, embedding_size, seq_max_len, n_hidden, n_classes, keep_prob, prediction_embed_list):
-        super(motivate_single, self).__init__(embedding_size, seq_max_len, n_hidden, n_classes, keep_prob,
-                                              prediction_embed_list)
+class Motivate_single_cell(HeroesCell):
+    def __init__(self, units, state_num, n_classes, keep_prob, prediction_embed_list):
+        super(Motivate_single_cell, self).__init__(units, state_num, n_classes, keep_prob, prediction_embed_list)
+        self.intensity_fun = lambda x: 5 / (1 + tf.exp(-x / 5))
 
     def get_dense_name(self):
         dense_layer_name = ['xfc', 'hfc', 'xic', 'hic', 'xoc', 'hoc', 'xzc', 'hzc', 'xtc', 'htc',
@@ -175,90 +145,56 @@ class motivate_single(motivate_model):
         dense_layer_name += ['xfc_hat', 'hfc_hat', 'xic_hat', 'hic_hat']
         return dense_layer_name
 
-    def call(self, inputs, **kwargs):
-        with tf.name_scope('RNN'), tf.variable_scope("RNN", reuse=tf.AUTO_REUSE):
-            h_c = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))  # (bs,hidden)
-            h_v = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))  # (bs,hidden)
-            c_c = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))
-            c_v = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))
-            c_c_hat = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))
-            prediction_c = []
-            prediction_v = []
-            for i in range(self.seq_max_len):
-                i_c = tf.sigmoid(self.dense_layer['xic'](inputs[i]) + self.dense_layer['hic'](h_c))
-                i_c_hat = tf.sigmoid(self.dense_layer['xic_hat'](inputs[i]) + self.dense_layer['hic_hat'](h_c))
-                f_c = tf.sigmoid(self.dense_layer['xfc'](inputs[i]) + self.dense_layer['hfc'](h_c))
-                f_c_hat = tf.sigmoid(self.dense_layer['xfc_hat'](inputs[i]) + self.dense_layer['hfc_hat'](h_c))
-                o_c = tf.sigmoid(self.dense_layer['xoc'](inputs[i]) + self.dense_layer['hoc'](h_c))
-                z_c = tf.tanh(self.dense_layer['xzc'](inputs[i]) + self.dense_layer['hzc'](h_c))
-                t_c = self.intensity_fun(self.dense_layer['xtc'](inputs[i]) + self.dense_layer['htc'](h_c))
+    def call(self, inputs, states):
+        h_c, h_v, c_c, c_v, c_c_hat, = states[0], states[1], states[2], states[3], states[4]
 
-                c_t_c = c_c_hat + (c_c - c_c_hat) * tf.exp(-t_c)
-                h_c = o_c * tf.tanh(c_t_c)
-                c_c = f_c * c_t_c + i_c * z_c
-                c_c_hat = f_c_hat * c_c_hat + i_c_hat * z_c
+        i_c = tf.sigmoid(self.dense_layer['xic'](inputs) + self.dense_layer['hic'](h_c))
+        i_c_hat = tf.sigmoid(self.dense_layer['xic_hat'](inputs) + self.dense_layer['hic_hat'](h_c))
+        f_c = tf.sigmoid(self.dense_layer['xfc'](inputs) + self.dense_layer['hfc'](h_c))
+        f_c_hat = tf.sigmoid(self.dense_layer['xfc_hat'](inputs) + self.dense_layer['hfc_hat'](h_c))
+        o_c = tf.sigmoid(self.dense_layer['xoc'](inputs) + self.dense_layer['hoc'](h_c))
+        z_c = tf.tanh(self.dense_layer['xzc'](inputs) + self.dense_layer['hzc'](h_c))
+        t_c = self.intensity_fun(self.dense_layer['xtc'](inputs) + self.dense_layer['htc'](h_c))
 
-                i_v = tf.sigmoid(self.dense_layer['xiv'](inputs[i]) + self.dense_layer['hiv'](h_v))
-                f_v = tf.sigmoid(self.dense_layer['xfv'](inputs[i]) + self.dense_layer['hfv'](h_v))
-                o_v = tf.sigmoid(self.dense_layer['xov'](inputs[i]) + self.dense_layer['hov'](h_v))
-                z_v = tf.tanh(self.dense_layer['xzv'](inputs[i]) + self.dense_layer['hzv'](h_v))
-                c_v = f_v * c_v + i_v * z_v
-                h_v = o_v * tf.tanh(c_v)
+        c_t_c = c_c_hat + (c_c - c_c_hat) * tf.exp(-t_c)
+        h_c = o_c * tf.tanh(c_t_c)
+        c_c = f_c * c_t_c + i_c * z_c
+        c_c_hat = f_c_hat * c_c_hat + i_c_hat * z_c
 
-                h_c_p = self.predict_call(h_c, target='c')
-                h_v_p = self.predict_call(h_v, target='v')
-                prediction_c.append(h_c_p)
-                prediction_v.append(h_c_p * h_v_p)
-        return prediction_c, prediction_v
+        i_v = tf.sigmoid(self.dense_layer['xiv'](inputs) + self.dense_layer['hiv'](h_v))
+        f_v = tf.sigmoid(self.dense_layer['xfv'](inputs) + self.dense_layer['hfv'](h_v))
+        o_v = tf.sigmoid(self.dense_layer['xov'](inputs) + self.dense_layer['hov'](h_v))
+        z_v = tf.tanh(self.dense_layer['xzv'](inputs) + self.dense_layer['hzv'](h_v))
+        c_v = f_v * c_v + i_v * z_v
+        h_v = o_v * tf.tanh(c_v)
+
+        h_c_p = self.predict_call(h_c, target='c')
+        h_v_p = self.predict_call(h_v, target='v')
+        return [h_c_p, h_c_p * h_v_p], [h_c, h_v, c_c, c_v, c_c_hat]
 
 
-class LSTM(Heroes):
-    def __init__(self, embedding_size, seq_max_len, n_hidden, n_classes, keep_prob, prediction_embed_list):
-        super(LSTM, self).__init__(embedding_size, seq_max_len, n_hidden, n_classes, keep_prob,
-                                   prediction_embed_list)
+class simple_lstm(HeroesCell):
+    def __init__(self, units, state_num, n_classes, keep_prob, prediction_embed_list):
+        super(simple_lstm, self).__init__(units, state_num, n_classes, keep_prob, prediction_embed_list)
+        self.lstm1 = tf.keras.layers.LSTMCell(units)
+        self.lstm2 = tf.keras.layers.LSTMCell(units)
 
     def get_dense_name(self):
-        dense_layer_name = ['xfc', 'hfc', 'xic', 'hic', 'xoc', 'hoc', 'xzc', 'hzc',
-                            'xfv', 'hfv', 'xiv', 'hiv', 'xov', 'hov', 'xzv', 'hzv']
-        return dense_layer_name
+        return []
 
-    def call(self, inputs, **kwargs):
-        with tf.name_scope('RNN'), tf.variable_scope("RNN", reuse=tf.AUTO_REUSE):
-            h_c = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))  # (bs,hidden)
-            h_v = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))  # (bs,hidden)
-            c_c = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))
-            c_v = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))
-            prediction_c = []
-            prediction_v = []
-            for i in range(self.seq_max_len):
-                i_c = tf.sigmoid(self.dense_layer['xic'](inputs[i]) + self.dense_layer['hic'](h_c))
-                f_c = tf.sigmoid(self.dense_layer['xfc'](inputs[i]) + self.dense_layer['hfc'](h_c))
-                o_c = tf.sigmoid(self.dense_layer['xoc'](inputs[i]) + self.dense_layer['hoc'](h_c))
-                z_c = tf.tanh(self.dense_layer['xzc'](inputs[i]) + self.dense_layer['hzc'](h_c))
+    def call(self, inputs, states):
+        h_c, c_c, h_v, c_v = states[0], states[1], states[2], states[3]
+        h_c, c_c = self.lstm1(inputs, [h_c, c_c])[1]
+        h_v, c_v = self.lstm2(inputs, [h_c, c_c])[1]
 
-                c_c = f_c * c_c + i_c * z_c
-                h_c = o_c * tf.tanh(c_c)
-
-                i_v = tf.sigmoid(self.dense_layer['xiv'](inputs[i]) + self.dense_layer['hiv'](h_v))
-                f_v = tf.sigmoid(self.dense_layer['xfv'](inputs[i]) + self.dense_layer['hfv'](h_v))
-                o_v = tf.sigmoid(self.dense_layer['xov'](inputs[i]) + self.dense_layer['hov'](h_v))
-                z_v = tf.tanh(self.dense_layer['xzv'](inputs[i]) + self.dense_layer['hzv'](h_v))
-                c_v = f_v * c_v + i_v * z_v
-                h_v = o_v * tf.tanh(c_v)
-
-                h_c_p = self.predict_call(h_c, target='c')
-                h_v_p = self.predict_call(h_v, target='v')
-                prediction_c.append(h_c_p)
-                prediction_v.append(h_c_p * h_v_p)
-        return prediction_c, prediction_v
+        h_c_p = self.predict_call(h_c, target='c')
+        h_v_p = self.predict_call(h_v, target='v')
+        return [h_c_p, h_c_p * h_v_p], [h_c, h_v, c_c, c_v]
 
 
-class time_LSTM(Heroes):
-    def __init__(self, embedding_size, seq_max_len, n_hidden, n_classes, keep_prob, prediction_embed_list,
-                 dataset_name):
-        super(time_LSTM, self).__init__(embedding_size, seq_max_len, n_hidden, n_classes, keep_prob,
-                                        prediction_embed_list)
-        self.dataset_name = dataset_name
+class time_lstm(HeroesCell):
+    def __init__(self, units, state_num, n_classes, keep_prob, prediction_embed_list):
+        super(time_lstm, self).__init__(units, state_num, n_classes, keep_prob, prediction_embed_list)
 
     def get_dense_name(self):
         dense_layer_name = ['xfc', 'hfc', 'xic', 'hic', 'xoc', 'hoc', 'xzc', 'hzc',
@@ -267,53 +203,68 @@ class time_LSTM(Heroes):
                              'xtv', 'civ', 'ttv', 'tov', 'cfv', 'cov']
         return dense_layer_name
 
-    def call(self, inputs, **kwargs):
+    def call(self, inputs, states):
         if self.dataset_name == 'Criteo':
-            time_stamp, inputs = inputs[:, :, 0], inputs[:, :, 1:]
+            time_stamp, inputs = inputs[:, 0], inputs[:, 1:]
             time_stamp = tf.expand_dims(time_stamp, -1)
         else:
-            inputs, time_stamp = tf.split(inputs, 2, 2)
-        with tf.name_scope('RNN'), tf.variable_scope("RNN", reuse=tf.AUTO_REUSE):
-            h_c = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))  # (bs,hidden)
-            h_v = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))  # (bs,hidden)
-            c_c = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))
-            c_v = tf.zeros(shape=(tf.shape(inputs)[1], self.n_hidden))
-            prediction_c = []
-            prediction_v = []
-            for i in range(self.seq_max_len):
-                i_c = tf.sigmoid(
-                    self.dense_layer['xic'](inputs[i]) + self.dense_layer['hic'](h_c) + self.dense_layer['cic'](c_c))
-                f_c = tf.sigmoid(
-                    self.dense_layer['xfc'](inputs[i]) + self.dense_layer['hfc'](h_c) + self.dense_layer['cfc'](c_c))
-                t_c = tf.sigmoid(
-                    self.dense_layer['xtc'](inputs[i]) + tf.sigmoid(self.dense_layer['ttc'](time_stamp[i])))
-                z_c = tf.tanh(self.dense_layer['xzc'](inputs[i]) + self.dense_layer['hzc'](h_c))
+            inputs, time_stamp = tf.split(inputs, 2, -1)
+        h_c, c_c, h_v, c_v = states[0], states[1], states[2], states[3]
+        i_c = tf.sigmoid(
+            self.dense_layer['xic'](inputs) + self.dense_layer['hic'](h_c) + self.dense_layer['cic'](c_c))
+        f_c = tf.sigmoid(
+            self.dense_layer['xfc'](inputs) + self.dense_layer['hfc'](h_c) + self.dense_layer['cfc'](c_c))
+        t_c = tf.sigmoid(
+            self.dense_layer['xtc'](inputs) + tf.sigmoid(self.dense_layer['ttc'](time_stamp)))
+        z_c = tf.tanh(self.dense_layer['xzc'](inputs) + self.dense_layer['hzc'](h_c))
 
-                c_c = f_c * c_c + i_c * t_c * z_c
-                o_c = tf.sigmoid(
-                    self.dense_layer['xoc'](inputs[i]) + self.dense_layer['toc'](time_stamp[i]) +
-                    self.dense_layer['hoc'](h_c) + self.dense_layer['coc'](c_c))
-                h_c = o_c * tf.tanh(c_c)
+        c_c = f_c * c_c + i_c * t_c * z_c
+        o_c = tf.sigmoid(
+            self.dense_layer['xoc'](inputs) + self.dense_layer['toc'](time_stamp) +
+            self.dense_layer['hoc'](h_c) + self.dense_layer['coc'](c_c))
+        h_c = o_c * tf.tanh(c_c)
 
-                i_v = tf.sigmoid(
-                    self.dense_layer['xiv'](inputs[i]) + self.dense_layer['hiv'](h_v) + self.dense_layer['civ'](c_v))
-                f_v = tf.sigmoid(
-                    self.dense_layer['xfv'](inputs[i]) + self.dense_layer['hfv'](h_v) + self.dense_layer['cfv'](c_v))
-                t_v = tf.sigmoid(
-                    self.dense_layer['xtv'](inputs[i]) + tf.sigmoid(self.dense_layer['ttv'](time_stamp[i])))
-                z_v = tf.tanh(self.dense_layer['xzv'](inputs[i]) + self.dense_layer['hzv'](h_v))
+        i_v = tf.sigmoid(
+            self.dense_layer['xiv'](inputs) + self.dense_layer['hiv'](h_v) + self.dense_layer['civ'](c_v))
+        f_v = tf.sigmoid(
+            self.dense_layer['xfv'](inputs) + self.dense_layer['hfv'](h_v) + self.dense_layer['cfv'](c_v))
+        t_v = tf.sigmoid(
+            self.dense_layer['xtv'](inputs) + tf.sigmoid(self.dense_layer['ttv'](time_stamp)))
+        z_v = tf.tanh(self.dense_layer['xzv'](inputs) + self.dense_layer['hzv'](h_v))
 
-                c_v = f_v * c_v + i_v * t_v * z_v
-                o_v = tf.sigmoid(
-                    self.dense_layer['xov'](inputs[i]) + self.dense_layer['tov'](time_stamp[i]) +
-                    self.dense_layer['hov'](h_v) + self.dense_layer['cov'](c_v))
-                h_v = o_v * tf.tanh(c_v)
+        c_v = f_v * c_v + i_v * t_v * z_v
+        o_v = tf.sigmoid(
+            self.dense_layer['xov'](inputs) + self.dense_layer['tov'](time_stamp) +
+            self.dense_layer['hov'](h_v) + self.dense_layer['cov'](c_v))
+        h_v = o_v * tf.tanh(c_v)
 
-                h_c_p = self.predict_call(h_c, target='c')
-                h_v_p = self.predict_call(h_v, target='v')
-                prediction_c.append(h_c_p)
-                prediction_v.append(h_c_p * h_v_p)
-        return prediction_c, prediction_v
+        h_c_p = self.predict_call(h_c, target='c')
+        h_v_p = self.predict_call(h_v, target='v')
+        return [h_c_p, h_c_p * h_v_p], [h_c, h_v, c_c, c_v]
+
+
+class RNN_model(tf.keras.layers.Layer):
+    def __init__(self, seq_max_len, n_hidden, n_classes, keep_prob, prediction_embed_list, model_name='Heroes'):
+        super(RNN_model, self).__init__()
+        self.seq_max_len = tf.range(seq_max_len)
+        if model_name == 'RRN':
+            self.cell = simple_lstm(n_hidden, 4, n_classes, keep_prob, prediction_embed_list)
+        elif model_name == 'Heroes':
+            self.cell = HeroesCell(n_hidden, 5, n_classes, keep_prob, prediction_embed_list)
+        elif model_name == 'motivate':
+            self.cell = Motivate_cell(n_hidden, 6, n_classes, keep_prob, prediction_embed_list)
+        elif model_name == 'motivate-single':
+            self.cell = Motivate_single_cell(n_hidden, 5, n_classes, keep_prob, prediction_embed_list)
+        elif model_name == 'time_LSTM':
+            self.cell = time_lstm(n_hidden, 4, n_classes, keep_prob, prediction_embed_list)
+
+        self.layer = tf.keras.layers.RNN(self.cell, name="RNN", trainable=True, time_major=True, return_sequences=True)
+
+    def call(self, inputs, **kwargs):
+        seq_len = kwargs['seq_len']
+        mask = tf.expand_dims(tf.transpose(tf.map_fn(lambda i: self.seq_max_len < i, seq_len, tf.bool)), dim=-1)
+        y = self.layer(inputs, mask=mask)
+        return y
 
 
 class STAMP(tf.keras.layers.Layer):
@@ -385,22 +336,3 @@ class STAMP(tf.keras.layers.Layer):
         prediction_v = self.predict_call([m_a, inputs], 'v')
         prediction_v *= prediction_c
         return prediction_c, prediction_v
-
-
-class NARM(tf.keras.layers.Layer):
-
-    def __init__(self, embedding_size, seq_max_len, n_hidden, keep_prob, prediction_embed_list):
-        super(NARM, self).__init__()
-        self.n_hidden = n_hidden
-        self.seq_max_len = seq_max_len
-        self.drop_out = tf.keras.layers.Dropout(rate=1 - keep_prob)
-        self.activate = tf.keras.layers.LeakyReLU()
-        self.A1 = tf.keras.layers.Dense(input_dim=n_hidden, units=n_hidden, use_bias=False,
-                                        kernel_initializer='random_normal', name='A1')
-        self.A2 = tf.keras.layers.Dense(input_dim=n_hidden, units=n_hidden, use_bias=False,
-                                        kernel_initializer='random_normal', name='A1')
-        self.GRU_c = tf.keras.layers.GRU(units=n_hidden, input_dim=embedding_size, return_sequences=True)
-        self.GRU_v = tf.keras.layers.GRU(units=n_hidden, input_dim=embedding_size, return_sequences=True)
-
-    def call(self, inputs, **kwargs):
-        h_c = self.GRU_c(inputs)

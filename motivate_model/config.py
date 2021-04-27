@@ -53,13 +53,13 @@ configure_list['alicpp']['motivate'] = {
     'n_hidden': 128,
     'n_classes': 1,
     'batch_size': 50,
-    'keep_prob': 0.4,
+    'keep_prob': 0.3,
     'prediction_embed_list': '64,32,16',
     'decay_step': 400,
-    'lr': 5e-2,
+    'lr': 1e-2,
     'click_weight': 0.14,
     'conversion_weight': 0.023,
-    'l2_reg': 1e-1
+    'l2_reg': 1e-2
 }
 
 configure_list['Criteo']['motivate-single'] = {

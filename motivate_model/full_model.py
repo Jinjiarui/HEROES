@@ -35,21 +35,9 @@ class Model(object):
 
     def get_back_model(self, embedding_size, seq_max_len, n_hidden, n_classes, keep_prob,
                        prediction_embed_list, model_name='Heroes'):
-        if model_name == 'Heroes':
-            return back_model.Heroes(embedding_size, seq_max_len, n_hidden, n_classes, keep_prob,
-                                     prediction_embed_list)
-        if model_name == 'motivate':
-            return back_model.motivate_model(embedding_size, seq_max_len, n_hidden, n_classes, keep_prob,
-                                             prediction_embed_list)
-        if model_name == 'motivate-single':
-            return back_model.motivate_single(embedding_size, seq_max_len, n_hidden, n_classes, keep_prob,
-                                              prediction_embed_list)
-        if model_name == 'RRN':
-            return back_model.LSTM(embedding_size, seq_max_len, n_hidden, n_classes, keep_prob,
-                                   prediction_embed_list)
-        if model_name == 'time_LSTM':
-            return back_model.time_LSTM(embedding_size, seq_max_len, n_hidden, n_classes, keep_prob,
-                                        prediction_embed_list, self.dataset_name)
+        RNN_model = ['Heroes', 'motivate', 'motivate-single', 'RRN', 'time_LSTM']
+        if model_name in RNN_model:
+            return back_model.RNN_model(seq_max_len, n_hidden, n_classes, keep_prob, prediction_embed_list, model_name)
         if model_name == 'STAMP':
             return back_model.STAMP(embedding_size, seq_max_len, n_hidden, keep_prob, prediction_embed_list)
 
@@ -85,13 +73,14 @@ class Model(object):
             tf.keras.backend.set_learning_phase(0)
         inputs = self.get_embedding()
         if self.model_name == 'Heroes':
-            prediction_c, prediction_v = self.model([inputs, self.placeholders['click_label']])
+            prediction_c, prediction_v = self.model(
+                tf.concat([inputs, tf.transpose(self.placeholders['click_label'], [1, 0, 2])], axis=-1),
+                seq_len=self.placeholders['seq_len'])
         else:
-            prediction_c, prediction_v = self.model(inputs)
+            prediction_c, prediction_v = self.model(inputs, seq_len=self.placeholders['seq_len'])
 
         if isinstance(prediction_c, list):
             prediction_c, prediction_v = tf.stack(prediction_c), tf.stack(prediction_v)
-        print(prediction_c,prediction_v)
 
         ops = tf.get_default_graph().get_operations()
         bn_update_ops = [x for x in ops if ("AssignMovingAvg" in x.name and x.type == "AssignSubVariableOp")]

@@ -41,6 +41,11 @@ def write(q, flag, file_list, dataset, batch_size, seq_max_len, buffer_size=10, 
                 if file_len_list is not None:
                     total_data = load_data.load_fun(dataset, seq_max_len, infile,
                                                     file_len_list[(step - 1) * batch_size:step * batch_size])
+                    total_data_id, total_data_value, total_click, total_label, total_seqlen = total_data
+                    if total_data_id:
+                        total_data_id = utils.sparse_tuple_from(total_data_id)
+                        total_data_value = utils.sparse_tuple_from(total_data_value, dtype=np.float32)
+                        total_data = [total_data_id, total_data_value, total_click, total_label, total_seqlen]
                 else:
                     total_data = load_data.load_fun(dataset, seq_max_len, infile, batch_size)
                 if not total_data[-1]:
@@ -49,6 +54,7 @@ def write(q, flag, file_list, dataset, batch_size, seq_max_len, buffer_size=10, 
                 if valid and step >= buffer_size:
                     break
         infile.close()
+    print("Load data Quit!")
     flag.get()
 
 
@@ -59,8 +65,8 @@ def get_feed(total_data, placeholders, dataset='Criteo'):
     if dataset == 'Criteo':
         feed_dict.update({placeholders['input']: total_data[0]})
     else:
-        feed_dict.update({placeholders['input_id']: utils.sparse_tuple_from(total_data[0]),
-                          placeholders['input_value']: utils.sparse_tuple_from(total_data[1], dtype=np.float32)})
+        feed_dict.update({placeholders['input_id']: total_data[0],
+                          placeholders['input_value']: total_data[1]})
     return feed_dict
 
 
@@ -122,7 +128,6 @@ def main(args):
                 print("Epoch:{}\tStep:{}".format(i, step), end='\t')
                 print_result(batch_loss, batch_cvr_loss, batch_click_loss, batch_eval)
                 step += 1
-            Pw.join()
             print()
             feed_dict = get_feed(valid_data, placeholders, args['dataset'])
 
@@ -158,7 +163,7 @@ def main(args):
             for i in range(len(all_result)):
                 all_result[i] += eval_result[i]
             step += 1
-        Pw.join()
+        print("Test Quit!")
         all_result = [i / step for i in all_result]
         print(all_result)
 
@@ -169,7 +174,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Unbiased learning")
     parser.add_argument(
-        "-m", "--model", type=str, choices=['motivate', "Heroes", 'motivate-single', 'RRN', 'time_LSTM','STAMP'],
+        "-m", "--model", type=str, choices=['motivate', "Heroes", 'motivate-single', 'RRN', 'time_LSTM', 'STAMP'],
         default="motivate-single",
         help="Model to use"
     )
