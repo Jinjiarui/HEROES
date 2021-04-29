@@ -97,4 +97,4 @@ def load_fun(dataset, max_seq_len, fin, batch_seq):
 
 if __name__ == '__main__':
     args = {'dataset': 'alicpp'}
-    the_load_fun = load_fun(args)
+    

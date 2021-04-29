@@ -119,7 +119,7 @@ def model_fn(features, labels, mode, params):
     dropout = list(map(float, params["dropout"].split(',')))
     ctr_task_wgt = params["ctr_task_wgt"]
 
-    Feat_Emb = tf.get_variable(name='other_embeddings', shape=[feature_size, embedding_size],
+    feat_emb = tf.get_variable(name='other_embeddings', shape=[feature_size, embedding_size],
                                initializer=tf.glorot_normal_initializer())
     common_dims = field_size * embedding_size
     feat_ids = features['feat_ids']
@@ -148,19 +148,19 @@ def model_fn(features, labels, mode, params):
     x_dvals = features['x_dvals']
 
     with tf.variable_scope("Shared-Embedding-layer"):
-        common_embs = tf.nn.embedding_lookup(Feat_Emb, feat_ids)  # None * F' * K
-        u_cat_emb = tf.nn.embedding_lookup_sparse(Feat_Emb, sp_ids=u_catids, sp_weights=u_catvals)  # None * K
-        u_shop_emb = tf.nn.embedding_lookup_sparse(Feat_Emb, sp_ids=u_shopids, sp_weights=u_shopvals)
-        u_brand_emb = tf.nn.embedding_lookup_sparse(Feat_Emb, sp_ids=u_brandids, sp_weights=u_brandvals)
-        u_int_emb = tf.nn.embedding_lookup_sparse(Feat_Emb, sp_ids=u_intids, sp_weights=u_intvals)
-        a_int_emb = tf.nn.embedding_lookup_sparse(Feat_Emb, sp_ids=a_intids, sp_weights=None)
-        a_cat_emb = tf.nn.embedding_lookup(Feat_Emb, a_catids)
-        a_shop_emb = tf.nn.embedding_lookup(Feat_Emb, a_shopids)
-        a_brand_emb = tf.nn.embedding_lookup(Feat_Emb, a_brandids)
-        x_a_emb = tf.nn.embedding_lookup_sparse(Feat_Emb, sp_ids=x_aids, sp_weights=x_avals)
-        x_b_emb = tf.nn.embedding_lookup_sparse(Feat_Emb, sp_ids=x_bids, sp_weights=x_bvals)
-        x_c_emb = tf.nn.embedding_lookup_sparse(Feat_Emb, sp_ids=x_cids, sp_weights=x_cvals)
-        x_d_emb = tf.nn.embedding_lookup_sparse(Feat_Emb, sp_ids=x_dids, sp_weights=x_dvals)
+        common_embs = tf.nn.embedding_lookup(feat_emb, feat_ids)  # None * F' * K
+        u_cat_emb = tf.nn.embedding_lookup_sparse(feat_emb, sp_ids=u_catids, sp_weights=u_catvals)  # None * K
+        u_shop_emb = tf.nn.embedding_lookup_sparse(feat_emb, sp_ids=u_shopids, sp_weights=u_shopvals)
+        u_brand_emb = tf.nn.embedding_lookup_sparse(feat_emb, sp_ids=u_brandids, sp_weights=u_brandvals)
+        u_int_emb = tf.nn.embedding_lookup_sparse(feat_emb, sp_ids=u_intids, sp_weights=u_intvals)
+        a_int_emb = tf.nn.embedding_lookup_sparse(feat_emb, sp_ids=a_intids, sp_weights=None)
+        a_cat_emb = tf.nn.embedding_lookup(feat_emb, a_catids)
+        a_shop_emb = tf.nn.embedding_lookup(feat_emb, a_shopids)
+        a_brand_emb = tf.nn.embedding_lookup(feat_emb, a_brandids)
+        x_a_emb = tf.nn.embedding_lookup_sparse(feat_emb, sp_ids=x_aids, sp_weights=x_avals)
+        x_b_emb = tf.nn.embedding_lookup_sparse(feat_emb, sp_ids=x_bids, sp_weights=x_bvals)
+        x_c_emb = tf.nn.embedding_lookup_sparse(feat_emb, sp_ids=x_cids, sp_weights=x_cvals)
+        x_d_emb = tf.nn.embedding_lookup_sparse(feat_emb, sp_ids=x_dids, sp_weights=x_dvals)
         x_concat = tf.concat(
             [tf.reshape(common_embs, shape=[-1, common_dims]), u_cat_emb, u_shop_emb, u_brand_emb, u_int_emb, a_cat_emb,
              a_shop_emb, a_brand_emb, a_int_emb, x_a_emb, x_b_emb, x_c_emb, x_d_emb], axis=1)
@@ -275,7 +275,7 @@ def model_fn(features, labels, mode, params):
     ctcvr_loss = tf.reduce_mean(ctcvr_loss)
     # ctr_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=y_ctr, labels=y))
     # ctcvr_loss = tf.reduce_mean(tf.losses.log_loss(predictions=pctcvr, labels=z))
-    loss = ctr_task_wgt * ctr_loss + (1 - ctr_task_wgt) * ctcvr_loss + l2_reg * tf.nn.l2_loss(Feat_Emb)
+    loss = ctr_task_wgt * ctr_loss + (1 - ctr_task_wgt) * ctcvr_loss + l2_reg * tf.nn.l2_loss(feat_emb)
     tf.summary.scalar('ctr_loss', ctr_loss)
     tf.summary.scalar('cvr_loss', ctcvr_loss)
 

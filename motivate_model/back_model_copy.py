@@ -389,7 +389,7 @@ class STAMP(tf.keras.layers.Layer):
 
 class NARM(tf.keras.layers.Layer):
 
-    def __init__(self, embedding_size, seq_max_len, n_hidden, keep_prob, prediction_embed_list):
+    def __init__(self, embedding_size, seq_max_len, n_hidden, keep_prob):
         super(NARM, self).__init__()
         self.n_hidden = n_hidden
         self.seq_max_len = seq_max_len

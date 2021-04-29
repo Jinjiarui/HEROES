@@ -174,7 +174,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Unbiased learning")
     parser.add_argument(
-        "-m", "--model", type=str, choices=['motivate', "Heroes", 'motivate-single', 'RRN', 'time_LSTM', 'STAMP'],
+        "-m", "--model", type=str,
+        choices=['motivate', "Heroes", 'motivate-single', 'RRN', 'time_LSTM', 'STAMP', 'NARM', 'Motivate-Heroes'],
         default="motivate-single",
         help="Model to use"
     )

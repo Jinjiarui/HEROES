@@ -19,7 +19,7 @@ class Model(object):
         self.embedding_matrix = tf.Variable(tf.random_normal([max_features, embedding_size], stddev=0.1))
         self.dataset_name = dataset_name
         self.model_name = model_name
-        self.model = self.get_back_model(embedding_size, seq_max_len, n_hidden, n_classes, keep_prob,
+        self.model = self.get_back_model(seq_max_len, n_hidden, n_classes, keep_prob,
                                          prediction_embed_list, model_name)
 
         epsilon = 1e-7
@@ -30,23 +30,26 @@ class Model(object):
             -(1 - conversion_weight) / conversion_weight * labels * tf.log(logits + epsilon) - \
             (1 - labels) * tf.log(1 - logits + epsilon)
         self.global_step = tf.Variable(0, trainable=False)
-        cov_learning_rate = tf.train.exponential_decay(self.lr, self.global_step, decay_step, 0.96)
+        cov_learning_rate = tf.train.exponential_decay(self.lr, self.global_step, decay_step, 0.7)
         self.optimizer = tf.train.AdamOptimizer(learning_rate=cov_learning_rate)
 
-    def get_back_model(self, embedding_size, seq_max_len, n_hidden, n_classes, keep_prob,
+    def get_back_model(self, seq_max_len, n_hidden, n_classes, keep_prob,
                        prediction_embed_list, model_name='Heroes'):
-        RNN_model = ['Heroes', 'motivate', 'motivate-single', 'RRN', 'time_LSTM']
-        if model_name in RNN_model:
-            return back_model.RNN_model(seq_max_len, n_hidden, n_classes, keep_prob, prediction_embed_list, model_name)
+        rnn_model_list = ['Heroes', 'motivate', 'motivate-single', 'RRN', 'time_LSTM', 'Motivate-Heroes']
+        if model_name in rnn_model_list:
+            return back_model.RNN_Model(seq_max_len, n_hidden, n_classes, keep_prob, prediction_embed_list, model_name,
+                                        self.dataset_name)
         if model_name == 'STAMP':
-            return back_model.STAMP(embedding_size, seq_max_len, n_hidden, keep_prob, prediction_embed_list)
+            return back_model.STAMP(seq_max_len, n_hidden, keep_prob, prediction_embed_list)
+        if model_name == 'NARM':
+            return back_model.NARM(seq_max_len, n_hidden, keep_prob, prediction_embed_list)
 
     def get_embedding(self):
         position_copy = tf.tile(self.position_embedding,
                                 [tf.shape(self.placeholders['click_label'])[0], 1])  # (bs*seq,embed)
         if self.dataset_name == 'Criteo':
             x1, x2 = tf.split(self.placeholders['input'], [1, 10], 2)
-            x2 = tf.to_int32(x2)
+            x2 = tf.cast(x2, tf.int32)
             x2 = tf.nn.embedding_lookup(self.embedding_matrix, x2)
             x2 = tf.reshape(x2, (-1, self.seq_max_len, 10 * self.embedding_size))  # (bs,seq,10*embed)
             if self.time_stamp:
@@ -72,7 +75,7 @@ class Model(object):
         else:
             tf.keras.backend.set_learning_phase(0)
         inputs = self.get_embedding()
-        if self.model_name == 'Heroes':
+        if self.model_name == 'Heroes' or self.model_name == 'Motivate-Heroes':
             prediction_c, prediction_v = self.model(
                 tf.concat([inputs, tf.transpose(self.placeholders['click_label'], [1, 0, 2])], axis=-1),
                 seq_len=self.placeholders['seq_len'])
@@ -82,9 +85,9 @@ class Model(object):
         if isinstance(prediction_c, list):
             prediction_c, prediction_v = tf.stack(prediction_c), tf.stack(prediction_v)
 
-        ops = tf.get_default_graph().get_operations()
+        '''ops = tf.get_default_graph().get_operations()
         bn_update_ops = [x for x in ops if ("AssignMovingAvg" in x.name and x.type == "AssignSubVariableOp")]
-        tf.add_to_collection(tf.GraphKeys.UPDATE_OPS, bn_update_ops)
+        tf.add_to_collection(tf.GraphKeys.UPDATE_OPS, bn_update_ops)'''
 
         mask = tf.sequence_mask(self.placeholders['seq_len'], self.seq_max_len)
         prediction_c = tf.boolean_mask(tf.transpose(prediction_c, [1, 0, 2]), mask)
@@ -120,6 +123,9 @@ class Model(object):
                                              tf.where(prediction_v >= threshold, one_cvr, zero_cvr))
         }
 
-        train_op = self.optimizer.minimize(loss, global_step=self.global_step)
-
+        #train_op = self.optimizer.minimize(loss, global_step=self.global_step)
+        gvs, v = zip(*self.optimizer.compute_gradients(loss))
+        gvs, _ = tf.clip_by_global_norm(gvs, 5.0)
+        gvs = zip(gvs, v)
+        train_op = self.optimizer.apply_gradients(gvs, global_step=self.global_step)
         return click_loss, conversion_loss, loss, eval_metric_ops, train_op
