@@ -120,7 +120,7 @@ with tf.name_scope('decoder'):
     c = states_h[-1]
     for i in range(seq_max_len):
         '''if FLAGS.task_type == 'train':
-            last_output = y[i]
+            last_output = click_y[i]
         else:
             last_output = tf.nn.softmax(output)'''
         last_output = tf.nn.softmax(output)

@@ -21,8 +21,8 @@ def do_write(fields, tfrecord_out):
     y, z = fields[2], fields[3]
     y, z = [float(y)], [float(z)]
     feature = {
-        "y": tf.train.Feature(float_list=tf.train.FloatList(value=y)),
-        "z": tf.train.Feature(float_list=tf.train.FloatList(value=z))
+        "click_y": tf.train.Feature(float_list=tf.train.FloatList(value=y)),
+        "conversion_y": tf.train.Feature(float_list=tf.train.FloatList(value=z))
     }
 
     user_id, item_id = [int(fields[4])], [int(fields[5])]

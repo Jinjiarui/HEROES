@@ -381,15 +381,15 @@ def main(_):
                         [P_c, reshape_click_label, P_v,
                          reshape_conversion_label], feed_dict=feed_dict)
                     result['pctr'] = np.append(result['pctr'], p_click)
-                    result['y'] = np.append(result['y'], l_click)
+                    result['click_y'] = np.append(result['click_y'], l_click)
                     result['pctcvr'] = np.append(result['pctcvr'], p_conver)
-                    result['z'] = np.append(result['z'], l_conver)
-                    print(len(result['pctr']), len(result['y']), len(result['pctcvr']), len(result['z']))
+                    result['conversion_y'] = np.append(result['conversion_y'], l_conver)
+                    print(len(result['pctr']), len(result['click_y']), len(result['pctcvr']), len(result['conversion_y']))
                 pctr = result['pctr']
-                y = result['y']
+                y = result['click_y']
                 pctcvr = result['pctcvr']
-                z = result['z']
-                print(len(result['pctr']), len(result['y']), len(result['pctcvr']), len(result['z']))
+                z = result['conversion_y']
+                print(len(result['pctr']), len(result['click_y']), len(result['pctcvr']), len(result['conversion_y']))
                 click_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
                 conversion_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
                 te_files_pkl = glob.glob("%s/test/remap_sample/r*txt.pkl" % FLAGS.data_dir)[0]

@@ -91,20 +91,15 @@ with tf.name_scope('LstmNet'), tf.variable_scope("LstmNet", reuse=tf.AUTO_REUSE)
 with tf.name_scope('attention'), tf.variable_scope("attention", reuse=tf.AUTO_REUSE):
     Ux = tf.layers.dense(x_last, units=n_hidden, use_bias=True, name='Ux')  # (bs,1,n_hidden)
     Uh = tf.layers.dense(states_h, units=n_hidden, use_bias=True, name='Uh')  # (bs, seq, n_hidden)
-    e = tf.reduce_sum(tf.tanh(Ux + Uh), reduction_indices=2)  # (bs,seq)
-    a = tf.map_fn(
-        lambda i: tf.concat([tf.nn.softmax(e[i][:seq_len[i]]), tf.zeros(shape=(seq_max_len - seq_len[i]))], axis=0),
-        tf.range(0, tf.shape(e)[0]), dtype=e.dtype)
+    e = tf.reduce_sum(tf.tanh(Ux + Uh), reduction_indices=2, keep_dims=True)  # (bs,seq,1)
+    e = tf.sigmoid(e)
+    a = e / tf.cumsum(e, axis=1)
+    c = tf.cumsum(states_h * a)  # (bs, seq, n_hidden)
+    c_seq_click = tf.layers.dense(c, units=1, use_bias=True, name='Pc')  # (bs,seq,1)
+    c_seq_conversion = tf.layers.dense(c, units=1, use_bias=True, name='Pv')  # (bs,seq,1)
 
-    c = tf.map_fn(lambda i: tf.reduce_sum(
-        tf.multiply(tf.reshape(a[i][:seq_len[i]], shape=(-1, 1)), states_h[i][:seq_len[i]]), axis=0),
-                  tf.range(0, tf.shape(e)[0]), dtype=a.dtype)  # (bs,n_hidden)
-
-    c_seq_click = tf.layers.dense(c, units=states_h.shape[1], use_bias=True, name='Pc')  # (bs,seq)
-    c_seq_conversion = tf.layers.dense(c, units=states_h.shape[1], use_bias=True, name='Pv')  # (bs,seq)
-
-    prediction_c = tf.sigmoid(c_seq_click)  # (bs,seq)
-    prediction_v = tf.sigmoid(c_seq_conversion)  # (bs,seq)
+    prediction_c = tf.sigmoid(c_seq_click)  # (bs,seq,1)
+    prediction_v = tf.sigmoid(c_seq_conversion)  # (bs,seq,1)
 
 prediction_c = tf.boolean_mask(prediction_c, mask)  # (real_seq)
 prediction_v = tf.boolean_mask(prediction_v, mask)
@@ -330,15 +325,16 @@ def main(_):
                         [prediction_c, reshape_click_label, prediction_v,
                          reshape_conversion_label], feed_dict=feed_dict)
                     result['pctr'] = np.append(result['pctr'], p_click)
-                    result['y'] = np.append(result['y'], l_click)
+                    result['click_y'] = np.append(result['click_y'], l_click)
                     result['pctcvr'] = np.append(result['pctcvr'], p_conver)
-                    result['z'] = np.append(result['z'], l_conver)
-                    print(len(result['pctr']), len(result['y']), len(result['pctcvr']), len(result['z']))
+                    result['conversion_y'] = np.append(result['conversion_y'], l_conver)
+                    print(len(result['pctr']), len(result['click_y']), len(result['pctcvr']),
+                          len(result['conversion_y']))
                 pctr = result['pctr']
-                y = result['y']
+                y = result['click_y']
                 pctcvr = result['pctcvr']
-                z = result['z']
-                print(len(result['pctr']), len(result['y']), len(result['pctcvr']), len(result['z']))
+                z = result['conversion_y']
+                print(len(result['pctr']), len(result['click_y']), len(result['pctcvr']), len(result['conversion_y']))
                 click_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
                 conversion_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
                 te_files_pkl = glob.glob("%s/test/remap_sample/r*txt.pkl" % FLAGS.data_dir)[0]

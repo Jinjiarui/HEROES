@@ -120,17 +120,17 @@ def get_cnts_distribution(if_str):
 def read_test(inf):
     def _parse_fn(record):
         features = {
-            "y": tf.FixedLenFeature([], tf.float32),
-            "z": tf.FixedLenFeature([], tf.float32),
+            "click_y": tf.FixedLenFeature([], tf.float32),
+            "conversion_y": tf.FixedLenFeature([], tf.float32),
             "user_id": tf.FixedLenFeature([], tf.int64),
             "item_id": tf.FixedLenFeature([], tf.int64),
             "other_feature_id": tf.VarLenFeature(tf.int64),
             "other_feature_val": tf.VarLenFeature(tf.float32),
         }
         parsed = tf.parse_single_example(record, features)
-        y = parsed.pop('y')
-        z = parsed.pop('z')
-        return parsed, {"y": y, "z": z}
+        y = parsed.pop('click_y')
+        z = parsed.pop('conversion_y')
+        return parsed, {"click_y": y, "conversion_y": z}
 
     dataset = tf.data.TFRecordDataset(inf)
     dataset = dataset.map(_parse_fn, num_parallel_calls=64).prefetch(50000)
@@ -140,7 +140,7 @@ def read_test(inf):
         while True:
             try:
                 batch_features, batch_labels = sess.run(item.get_next())
-                y, z = batch_labels['y'], batch_labels['z']
+                y, z = batch_labels['click_y'], batch_labels['conversion_y']
                 epsilon = 1e-7
                 click_num = tf.to_float(tf.count_nonzero(y))
                 conversion_num = tf.to_float(tf.count_nonzero(z))

@@ -16,17 +16,17 @@ tf.flags.DEFINE_integer("num_threads", 16, "Number of threads")
 tf.flags.DEFINE_integer("feature_size", 10, "Size of Features")
 tf.flags.DEFINE_integer("feature_num", 5867, "Num of Features")
 tf.flags.DEFINE_integer("embedding_size", 64, "Embedding size")
-tf.flags.DEFINE_integer("num_epochs", 10, "Number of epochs")
+tf.flags.DEFINE_integer("num_epochs", 50, "Number of epochs")
 tf.flags.DEFINE_integer("batch_size", 10000, "Number of batch size")
 tf.flags.DEFINE_integer("log_steps", 10, "save summary every steps")
-tf.flags.DEFINE_float("learning_rate", 0.001, "learning rate")
+tf.flags.DEFINE_float("learning_rate", 0.01, "learning rate")
 tf.flags.DEFINE_float("l2_reg", 0.01, "L2 regularization")
 tf.flags.DEFINE_string("loss_type", 'log_loss', "loss type {square_loss, log_loss}")
 tf.flags.DEFINE_float("ctr_task_wgt", 0.5, "loss weight of ctr task")
 tf.flags.DEFINE_string("optimizer", 'Adam', "optimizer type {Adam, Adagrad, GD, Momentum}")
-tf.flags.DEFINE_string("deep_layers", '256,128,64', "deep layers")
+tf.flags.DEFINE_string("deep_layers", '64,32,16', "deep layers")
 tf.flags.DEFINE_string("dropout", '0.5,0.5,0.5', "dropout rate")
-tf.flags.DEFINE_string("gpus", '', "list of gpus")
+tf.flags.DEFINE_string("gpus", '0', "list of gpus")
 tf.flags.DEFINE_boolean("batch_norm", True, "perform batch normaization (True or False)")
 tf.flags.DEFINE_float("batch_norm_decay", 0.9, "decay for the moving average(recommend trying decay=0.9)")
 tf.flags.DEFINE_string("data_dir", './../Criteo', "data dir")
@@ -53,23 +53,23 @@ def input_fn(filenames, batch_size=32, num_epochs=1, perform_shuffle=False, pred
 
     def _parse_fn(record):
         features = {
-            "y": tf.FixedLenFeature([], tf.float32),
-            "z": tf.FixedLenFeature([], tf.float32),
+            "click_y": tf.FixedLenFeature([], tf.float32),
+            "conversion_y": tf.FixedLenFeature([], tf.float32),
             "features": tf.FixedLenFeature([FLAGS.feature_size], tf.int64)
         }
         parsed = tf.parse_single_example(record, features)
         if predict_mode:
             return parsed, {}
-        y = parsed.pop('y')
-        z = parsed.pop('z')
-        return parsed, {"y": y, "z": z}
+        y = parsed.pop('click_y')
+        z = parsed.pop('conversion_y')
+        return parsed, {"click_y": y, "conversion_y": z}
 
     # Extract lines from input files using the Dataset API, can pass one filename or filename list
     dataset = tf.data.TFRecordDataset(filenames).map(_parse_fn, num_parallel_calls=64).prefetch(
         1000000)  # multi-thread pre-process then prefetch
     # Randomizes input using a window of 256 elements (read into memory)
     if perform_shuffle:
-        dataset = dataset.shuffle(buffer_size=5000)
+        dataset = dataset.shuffle(buffer_size=50000)
 
     # epochs from blending together.
     dataset = dataset.repeat(num_epochs)
@@ -81,7 +81,7 @@ def input_fn(filenames, batch_size=32, num_epochs=1, perform_shuffle=False, pred
 
 
 def model_fn(features, labels, mode, params):
-    """Bulid Model function f(x) for Estimator."""
+    """Build Model function f(x) for Estimator."""
     # ------hyperparameters----
     features_num = params['feature_num']
     feature_size = params['feature_size']
@@ -183,20 +183,28 @@ def model_fn(features, labels, mode, params):
             predictions)}
     # Provide an estimator spec for `ModeKeys.PREDICT`
     if mode == tf.estimator.ModeKeys.PREDICT:
-        predictions["y"] = features["y"]
-        predictions["z"] = features["z"]
+        predictions["click_y"] = features["click_y"]
+        predictions["conversion_y"] = features["conversion_y"]
         return tf.estimator.EstimatorSpec(
             mode=mode,
             predictions=predictions,
             export_outputs=export_outputs)
 
     # ------bulid loss------
-    y = labels['y']
-    z = labels['z']
+    y = labels['click_y']
+    z = labels['conversion_y']
 
-    ctr_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=y_ctr, labels=y))
-    ctcvr_loss = tf.reduce_mean(tf.losses.log_loss(predictions=pctcvr, labels=z))
-    loss = ctr_task_wgt * ctr_loss + (1 - ctr_task_wgt) * ctcvr_loss + l2_reg * tf.nn.l2_loss(Emb)
+    epsilon = 1e-7
+    click_weight = 0.5
+    conversion_weight = 0.1
+    ctr_loss = - (1 - click_weight) / click_weight * y * tf.log(pctr + epsilon) - (1 - y) * tf.log(1 - pctr + epsilon)
+    ctr_loss = tf.reduce_mean(ctr_loss)
+    ctcvr_loss = - (1 - conversion_weight) / conversion_weight * z * tf.log(pctcvr + epsilon) - \
+                 (1 - z) * tf.log(1 - pctcvr + epsilon)
+    ctcvr_loss = tf.reduce_mean(ctcvr_loss)
+    # ctr_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=y_ctr, labels=y))
+    # ctcvr_loss = tf.reduce_mean(tf.losses.log_loss(predictions=pctcvr, labels=z))
+    loss = (ctr_task_wgt * ctr_loss + (1 - ctr_task_wgt) * ctcvr_loss) * 100 + l2_reg * tf.nn.l2_loss(Emb)
 
     tf.summary.scalar('ctr_loss', ctr_loss)
     tf.summary.scalar('cvr_loss', ctcvr_loss)
@@ -221,7 +229,10 @@ def model_fn(features, labels, mode, params):
             eval_metric_ops=eval_metric_ops)
 
     optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate, beta1=0.9, beta2=0.999, epsilon=1e-8)
-    train_op = optimizer.minimize(loss, global_step=tf.train.get_global_step())
+    gvs, v = zip(*optimizer.compute_gradients(loss))
+    gvs, _ = tf.clip_by_global_norm(gvs, 5.0)
+    gvs = zip(gvs, v)
+    train_op = optimizer.apply_gradients(gvs, global_step=tf.train.get_global_step())
 
     # Provide an estimator spec for `ModeKeys.TRAIN` modes
     if mode == tf.estimator.ModeKeys.TRAIN:
@@ -236,7 +247,7 @@ def main(_):
     # ------check Arguments------
     if FLAGS.dt_dir == "":
         FLAGS.dt_dir = (date.today() + timedelta(-1)).strftime('%Y%m%d')
-    FLAGS.model_dir = FLAGS.model_dir + FLAGS.dt_dir + "2"
+    FLAGS.model_dir = FLAGS.model_dir + FLAGS.dt_dir
 
     print('task_type ', FLAGS.task_type)
     print('model_dir ', FLAGS.model_dir)
@@ -307,10 +318,10 @@ def main(_):
         z = []
         for prob in preds:
             pctr.append(prob['pctr'])
-            y.append(prob['y'])
+            y.append(prob['click_y'])
 
             pctcvr.append(prob['pctcvr'])
-            z.append(prob['z'])
+            z.append(prob['conversion_y'])
         pctr = np.array(pctr)
         y = np.array(y)
         pctcvr = np.array(pctcvr)

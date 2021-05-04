@@ -51,17 +51,17 @@ def input_fn(filenames, batch_size=32, num_epochs=1, perform_shuffle=False):
 
     def _parse_fn(record):
         features = {
-            "y": tf.FixedLenFeature([], tf.float32),
-            "z": tf.FixedLenFeature([], tf.float32),
+            "click_y": tf.FixedLenFeature([], tf.float32),
+            "conversion_y": tf.FixedLenFeature([], tf.float32),
             "user_id": tf.FixedLenFeature([], tf.int64),
             "item_id": tf.FixedLenFeature([], tf.int64),
             "other_feature_id": tf.VarLenFeature(tf.int64),
             "other_feature_val": tf.VarLenFeature(tf.float32),
         }
         parsed = tf.parse_single_example(record, features)
-        y = parsed.pop('y')
-        z = parsed.pop('z')
-        return parsed, {"y": y, "z": z}
+        y = parsed.pop('click_y')
+        z = parsed.pop('conversion_y')
+        return parsed, {"click_y": y, "conversion_y": z}
 
     # Extract lines from input files using the Dataset API, can pass one filename or filename list
 
@@ -176,17 +176,17 @@ def model_fn(features, labels, mode, params):
             export_outputs=export_outputs)
 
     # ------bulid loss------
-    y = labels['y']
-    z = labels['z']
+    y = labels['click_y']
+    z = labels['conversion_y']
 
     '''epsilon = 1e-7
-    click_num = tf.to_float(tf.count_nonzero(y))
-    conversion_num = tf.to_float(tf.count_nonzero(z))
-    click_weight = (tf.to_float(tf.size(y)) - click_num) / (click_num + epsilon)
-    conversion_weight = (tf.to_float(tf.size(z)) - conversion_num) / (conversion_num + epsilon)'''
+    click_num = tf.to_float(tf.count_nonzero(click_y))
+    conversion_num = tf.to_float(tf.count_nonzero(conversion_y))
+    click_weight = (tf.to_float(tf.size(click_y)) - click_num) / (click_num + epsilon)
+    conversion_weight = (tf.to_float(tf.size(conversion_y)) - conversion_num) / (conversion_num + epsilon)'''
 
     ctr_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=y_ctr, labels=y))
-    # cvr_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=y_ctcvr, labels=z))
+    # cvr_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=y_ctcvr, labels=conversion_y))
     ctcvr_loss = tf.reduce_mean(tf.losses.log_loss(predictions=pctcvr, labels=z))
     loss = ctr_task_wgt * ctr_loss + (1 - ctr_task_wgt) * ctcvr_loss + l2_reg * tf.nn.l2_loss(
         User_Emb) + l2_reg * tf.nn.l2_loss(Item_Emb) + l2_reg * tf.nn.l2_loss(Other_Emb)

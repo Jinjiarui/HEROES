@@ -8,6 +8,7 @@ import tensorflow as tf
 
 import load_data
 import utils
+import evaluate_util
 
 
 def get_placeholders(args):
@@ -80,6 +81,77 @@ def print_result(loss, conversion_loss, click_loss, eval_metric_ops):
            eval_metric_ops['CTCVR_ACC'][0], eval_metric_ops['CTCVR_AUC'][0]
 
 
+def evaluate(pctr, click_y, pctcvr, conversion_y, seq_len, dataset):
+    print(len(pctr), len(click_y), len(pctcvr), len(conversion_y), len(seq_len))
+    print(click_y[:100])
+    predict_label_click = np.concatenate([np.expand_dims(pctr, axis=-1), np.expand_dims(click_y, axis=-1)], axis=-1)
+    predict_label_conversion = np.concatenate([np.expand_dims(pctcvr, axis=-1), np.expand_dims(conversion_y, axis=-1)],
+                                              axis=-1)
+    click_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
+    conversion_result = {'loss': 0, 'acc': 0, 'auc': 0, 'f1': 0, 'ndcg': 0, 'map': 0}
+    indices = np.cumsum(seq_len, dtype=np.int)
+    indices = np.append([0], indices)
+    print(seq_len)
+    print(indices)
+    if dataset == 'alicpp':
+        pctr_copy, click_y_copy, indices_click = evaluate_util.copy_positive(pctr, click_y, indices)
+        pctcvr_copy, conversion_y_copy, indices_conversion = evaluate_util.copy_positive(pctcvr, conversion_y, indices)
+        predict_label_click_copy = np.concatenate(
+            [np.expand_dims(pctr_copy, axis=-1), np.expand_dims(click_y_copy, axis=-1)], axis=-1)
+        predict_label_conversion_copy = np.concatenate(
+            [np.expand_dims(pctcvr_copy, axis=-1), np.expand_dims(conversion_y_copy, axis=-1)], axis=-1)
+
+        print(len(pctr_copy), len(click_y_copy), len(pctcvr_copy), len(conversion_y_copy))
+    else:
+        pctr_copy, click_y_copy, indices_click = pctr, click_y, indices
+        pctcvr_copy, conversion_y_copy, indices_conversion = pctcvr, conversion_y, indices
+        predict_label_click_copy, predict_label_conversion_copy = predict_label_click, predict_label_conversion
+    click_result['loss'] = evaluate_util.evaluate_logloss(pctr_copy, click_y_copy)
+    click_result['acc'] = evaluate_util.evaluate_acc(pctr_copy, click_y_copy)
+    click_result['auc'] = evaluate_util.evaluate_auc(pctr, click_y)
+    click_result['f1'] = evaluate_util.evaluate_f1_score(pctr_copy, click_y_copy)
+
+    predict_label_click = tf.convert_to_tensor(predict_label_click, dtype=tf.float32)
+    indices = tf.convert_to_tensor(indices)
+    print(predict_label_click, indices)
+    click_result['ndcg'] = evaluate_util.evaluate_ndcg(None, predict_label_click, indices)
+    click_result['ndcg1'] = evaluate_util.evaluate_ndcg(1, predict_label_click, indices)
+    click_result['ndcg3'] = evaluate_util.evaluate_ndcg(3, predict_label_click, indices)
+    click_result['ndcg5'] = evaluate_util.evaluate_ndcg(5, predict_label_click, indices)
+    click_result['ndcg10'] = evaluate_util.evaluate_ndcg(10, predict_label_click, indices)
+
+    predict_label_click_copy = tf.convert_to_tensor(predict_label_click_copy, dtype=tf.float32)
+    indices_click = tf.convert_to_tensor(indices_click)
+
+    click_result['map'] = evaluate_util.evaluate_map(None, predict_label_click_copy, indices_click)
+    click_result['map1'] = evaluate_util.evaluate_map(1, predict_label_click_copy, indices_click)
+    click_result['map3'] = evaluate_util.evaluate_map(3, predict_label_click_copy, indices_click)
+    click_result['map5'] = evaluate_util.evaluate_map(5, predict_label_click_copy, indices_click)
+    click_result['map10'] = evaluate_util.evaluate_map(10, predict_label_click_copy, indices_click)
+
+    conversion_result['loss'] = evaluate_util.evaluate_logloss(pctcvr_copy, conversion_y_copy)
+    conversion_result['acc'] = evaluate_util.evaluate_acc(pctcvr_copy, conversion_y_copy)
+    conversion_result['auc'] = evaluate_util.evaluate_auc(pctcvr, conversion_y)
+    conversion_result['f1'] = evaluate_util.evaluate_f1_score(pctcvr_copy, conversion_y_copy)
+
+    predict_label_conversion = tf.convert_to_tensor(predict_label_conversion, dtype=tf.float32)
+    conversion_result['ndcg'] = evaluate_util.evaluate_ndcg(None, predict_label_conversion, indices)
+    conversion_result['ndcg1'] = evaluate_util.evaluate_ndcg(1, predict_label_conversion, indices)
+    conversion_result['ndcg3'] = evaluate_util.evaluate_ndcg(3, predict_label_conversion, indices)
+    conversion_result['ndcg5'] = evaluate_util.evaluate_ndcg(5, predict_label_conversion, indices)
+    conversion_result['ndcg10'] = evaluate_util.evaluate_ndcg(10, predict_label_conversion, indices)
+
+    predict_label_conversion_copy = tf.convert_to_tensor(predict_label_conversion_copy, dtype=tf.float32)
+    indices_conversion = tf.convert_to_tensor(indices_conversion)
+    conversion_result['map'] = evaluate_util.evaluate_map(None, predict_label_conversion_copy, indices_conversion)
+    conversion_result['map1'] = evaluate_util.evaluate_map(1, predict_label_conversion_copy, indices_conversion)
+    conversion_result['map3'] = evaluate_util.evaluate_map(3, predict_label_conversion_copy, indices_conversion)
+    conversion_result['map5'] = evaluate_util.evaluate_map(5, predict_label_conversion_copy, indices_conversion)
+    conversion_result['map10'] = evaluate_util.evaluate_map(10, predict_label_conversion_copy, indices_conversion)
+
+    return click_result, conversion_result
+
+
 def main(args):
     placeholders = get_placeholders(args)
     args['data_dir'] = args['data_dir'].format(args['dataset'])
@@ -139,9 +211,10 @@ def main(args):
             if batch_eval['CTCVR_AUC'][0] > best_auc:
                 best_auc = batch_eval['CTCVR_AUC'][0]
                 saver.save(sess, model_path)
-
     print("Test:")
-    click_loss, conversion_loss, loss, eval_metric_ops, _ = model.forward(training=False)
+    click_loss, conversion_loss, loss, eval_metric_ops, \
+    prediction_c, reshape_click_label, prediction_v, reshape_conversion_label \
+        = model.forward(training=False)
     with tf.Session(config=config) as sess:
         sess.run(tf.local_variables_initializer())
         saver.restore(sess, model_path)
@@ -153,19 +226,39 @@ def main(args):
                      args=(q, flag, te_files, args['dataset'], 5 * args['batch_size'], args['seq_max_len']))
         Pw.start()
         all_result = [0] * 7
+        pctr, click_y, pctcvr, conversion_y, seq_len = np.array([]), np.array([]), np.array([]), np.array([]), np.array(
+            [])
         while not q.empty() or not flag.empty():
             total_data = q.get(True)
             feed_dict = get_feed(total_data, placeholders, args['dataset'])
-            batch_loss, batch_cvr_loss, batch_click_loss, batch_eval = sess.run(
-                [loss, conversion_loss, click_loss, eval_metric_ops], feed_dict=feed_dict)
+            batch_loss, batch_cvr_loss, batch_click_loss, batch_eval, p_click, l_click, p_conver, l_conver = sess.run(
+                [loss, conversion_loss, click_loss, eval_metric_ops, prediction_c, reshape_click_label, prediction_v,
+                 reshape_conversion_label], feed_dict=feed_dict)
             print("Step:{}".format(step), end='\t')
             eval_result = print_result(batch_loss, batch_cvr_loss, batch_click_loss, batch_eval)
             for i in range(len(all_result)):
                 all_result[i] += eval_result[i]
             step += 1
+            pctr = np.append(pctr, p_click)
+            click_y = np.append(click_y, l_click)
+            pctcvr = np.append(pctcvr, p_conver)
+            conversion_y = np.append(conversion_y, l_conver)
+            seq_len = np.append(seq_len, total_data[-1])
+
         print("Test Quit!")
-        all_result = [i / step for i in all_result]
-        print(all_result)
+        click_result, conversion_result = evaluate(pctr, click_y, pctcvr, conversion_y, seq_len,
+                                                   dataset=args['dataset'])
+        print("Click Result")
+        for k, v in click_result.items():
+            if k[:3] in ['map', 'ndc']:
+                v = sess.run(v)
+            print("{}:{}".format(k, v))
+        print()
+        print("Conversion Result")
+        for k, v in conversion_result.items():
+            if k[:3] in ['map', 'ndc']:
+                v = sess.run(v)
+            print("{}:{}".format(k, v))
 
 
 if __name__ == "__main__":
@@ -175,7 +268,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Unbiased learning")
     parser.add_argument(
         "-m", "--model", type=str,
-        choices=['motivate', "Heroes", 'motivate-single', 'RRN', 'time_LSTM', 'STAMP', 'NARM', 'Motivate-Heroes'],
+        choices=['motivate', "Heroes", 'motivate-single', 'RRN', 'LSTM', 'time_LSTM', 'STAMP', 'NARM', 'DUPN',
+                 'Motivate-Heroes'],
         default="motivate-single",
         help="Model to use"
     )

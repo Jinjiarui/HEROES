@@ -2,7 +2,7 @@ import tensorflow as tf
 from utils.base import BaseModel
 import collections
 
-CellState = collections.namedtuple("CellState", ["c", "h", "z"])
+CellState = collections.namedtuple("CellState", ["c", "h", "conversion_y"])
 
 class Cell(rnn_cell_impl.RNNCell):
     def __init__(self, num_unit, h_below_size, h_above_size, reuse):
@@ -13,12 +13,12 @@ class Cell(rnn_cell_impl.RNNCell):
     
     @property
     def state_size(self):
-        # the size of state: c, h, z
+        # the size of state: c, h, conversion_y
         return (self._numunit, self._numunit, 1)
     
     @property
     def output_size(self):
-        # output: h, z
+        # output: h, conversion_y
         return self._numunit+1
     
     def cal_zerostate(self, batch_size):
@@ -29,7 +29,7 @@ class Cell(rnn_cell_impl.RNNCell):
     
     def cal_cellstate(self, c, g, i, f, z, zb):
         # c, g, i, f: batch_size, hidden_dim
-        # z, zb: batch_size, hidden_dim
+        # conversion_y, zb: batch_size, hidden_dim
         # -> c: batch_size, hidden_dim
         z = tf.squeeze(z, axis=1) # hidden_dim
         zb = tf.squeeze(zb, axis=1) # hidden_dim, 1
@@ -46,7 +46,7 @@ class Cell(rnn_cell_impl.RNNCell):
 
     def cal_cellhidden(self, h, o, c, z, zb):
         # h, o, c: batch_size, hidden_dim
-        # z, zb: batch_size, 1
+        # conversion_y, zb: batch_size, 1
         # -> h: batch_size, hidden_dim
         z = tf.squeeze(z, axis=1)
         zb = tf.squeeze(zb, axis=1)
@@ -71,9 +71,9 @@ class Cell(rnn_cell_impl.RNNCell):
     
     def call(self, inputs, states):
         # inputs: batch_size, hblowsize+1+habovesize
-        # states: c: batch_size, hidden_dim, h: batch_size, hidden_dim, z: batch_size, 1
+        # states: c: batch_size, hidden_dim, h: batch_size, hidden_dim, conversion_y: batch_size, 1
         # outputs: batch_size, hidden_dim+1
-        # new states: c: batch_size, hidden_dim, h: batch_size, hidden_dim, z: batch_size, 1
+        # new states: c: batch_size, hidden_dim, h: batch_size, hidden_dim, conversion_y: batch_size, 1
         c = states.c
         h = states.h
         z = states.z

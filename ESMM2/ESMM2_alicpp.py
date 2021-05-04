@@ -16,16 +16,16 @@ FLAGS = tf.flags.FLAGS
 tf.flags.DEFINE_integer("num_threads", 64, "Number of threads")
 tf.flags.DEFINE_integer("feature_size", 638095, "Size of other_size")
 tf.flags.DEFINE_integer("embedding_size", 32, "Embedding size")
-tf.flags.DEFINE_integer("num_epochs", 100, "Number of epochs")
+tf.flags.DEFINE_integer("num_epochs", 50, "Number of epochs")
 tf.flags.DEFINE_integer("field_size", 11, "Number of common fields")
 tf.flags.DEFINE_integer("batch_size", 10000, "Number of batch size")
 tf.flags.DEFINE_integer("log_steps", 10, "save summary every steps")
-tf.flags.DEFINE_float("learning_rate", 0.001, "learning rate")
+tf.flags.DEFINE_float("learning_rate", 0.01, "learning rate")
 tf.flags.DEFINE_float("l2_reg", 0.01, "L2 regularization")
 tf.flags.DEFINE_string("loss_type", 'log_loss', "loss type {square_loss, log_loss}")
 tf.flags.DEFINE_float("ctr_task_wgt", 0.5, "loss weight of ctr task")
 tf.flags.DEFINE_string("optimizer", 'Adam', "optimizer type {Adam, Adagrad, GD, Momentum}")
-tf.flags.DEFINE_string("deep_layers", '256,128,64', "deep layers")
+tf.flags.DEFINE_string("deep_layers", '64,32,16', "deep layers")
 tf.flags.DEFINE_string("dropout", '0.5,0.5,0.5', "dropout rate")
 tf.flags.DEFINE_string("gpus", '0', "list of gpus")
 tf.flags.DEFINE_boolean("batch_norm", True, "perform batch normaization (True or False)")
@@ -54,8 +54,8 @@ def input_fn(filenames, batch_size=32, num_epochs=1, perform_shuffle=False, pred
 
     def _parse_fn(record):
         features = {
-            "y": tf.FixedLenFeature([], tf.float32),
-            "z": tf.FixedLenFeature([], tf.float32),
+            "click_y": tf.FixedLenFeature([], tf.float32),
+            "conversion_y": tf.FixedLenFeature([], tf.float32),
             "feat_ids": tf.FixedLenFeature([FLAGS.field_size], tf.int64),
             # "feat_vals": tf.FixedLenFeature([None], tf.float32),
             "u_catids": tf.VarLenFeature(tf.int64),
@@ -82,9 +82,9 @@ def input_fn(filenames, batch_size=32, num_epochs=1, perform_shuffle=False, pred
         parsed = tf.parse_single_example(record, features)
         if predict_mode:
             return parsed, {}
-        y = parsed.pop('y')
-        z = parsed.pop('z')
-        return parsed, {"y": y, "z": z}
+        y = parsed.pop('click_y')
+        z = parsed.pop('conversion_y')
+        return parsed, {"click_y": y, "conversion_y": z}
 
     # Extract lines from input files using the Dataset API, can pass one filename or filename list
 
@@ -93,7 +93,7 @@ def input_fn(filenames, batch_size=32, num_epochs=1, perform_shuffle=False, pred
 
     # Randomizes input using a window of 256 elements (read into memory)
     if perform_shuffle:
-        dataset = dataset.shuffle(buffer_size=10000)
+        dataset = dataset.shuffle(buffer_size=20000)
 
     # epochs from blending together.
     dataset = dataset.repeat(num_epochs)
@@ -245,28 +245,28 @@ def model_fn(features, labels, mode, params):
             predictions)}
     # Provide an estimator spec for `ModeKeys.PREDICT`
     if mode == tf.estimator.ModeKeys.PREDICT:
-        predictions["y"] = features["y"]
-        predictions["z"] = features["z"]
+        predictions["click_y"] = features["click_y"]
+        predictions["conversion_y"] = features["conversion_y"]
         return tf.estimator.EstimatorSpec(
             mode=mode,
             predictions=predictions,
             export_outputs=export_outputs)
 
     # ------bulid loss------
-    y = labels['y']
-    z = labels['z']
+    y = labels['click_y']
+    z = labels['conversion_y']
 
     epsilon = 1e-7
-    click_weight = 0.08
-    conversion_weight = 0.04
-    ctr_loss = - (1 - click_weight) * y * tf.log(pctr + epsilon) - click_weight * (1 - y) * tf.log(1 - pctr + epsilon)
+    click_weight = 0.14
+    conversion_weight = 0.023
+    ctr_loss = - (1 - click_weight) / click_weight * y * tf.log(pctr + epsilon) - (1 - y) * tf.log(1 - pctr + epsilon)
     ctr_loss = tf.reduce_mean(ctr_loss)
-    ctcvr_loss = - (1 - conversion_weight) * z * tf.log(pctcvr + epsilon) - \
-                 conversion_weight * (1 - z) * tf.log(1 - pctcvr + epsilon)
+    ctcvr_loss = - (1 - conversion_weight) / conversion_weight * z * tf.log(pctcvr + epsilon) - \
+                 (1 - z) * tf.log(1 - pctcvr + epsilon)
     ctcvr_loss = tf.reduce_mean(ctcvr_loss)
-    # ctr_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=y_ctr, labels=y))
-    # ctcvr_loss = tf.reduce_mean(tf.losses.log_loss(predictions=pctcvr, labels=z))
-    loss = ctr_task_wgt * ctr_loss + (1 - ctr_task_wgt) * ctcvr_loss + l2_reg * tf.nn.l2_loss(Feat_Emb)
+    # ctr_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=y_ctr, labels=click_y))
+    # ctcvr_loss = tf.reduce_mean(tf.losses.log_loss(predictions=pctcvr, labels=conversion_y))
+    loss = (ctr_task_wgt * ctr_loss + (1 - ctr_task_wgt) * ctcvr_loss) * 100 + l2_reg * tf.nn.l2_loss(Feat_Emb)
     tf.summary.scalar('ctr_loss', ctr_loss)
     tf.summary.scalar('cvr_loss', ctcvr_loss)
 
@@ -290,7 +290,10 @@ def model_fn(features, labels, mode, params):
             eval_metric_ops=eval_metric_ops)
 
     optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate, beta1=0.9, beta2=0.999, epsilon=1e-8)
-    train_op = optimizer.minimize(loss, global_step=tf.train.get_global_step())
+    gvs, v = zip(*optimizer.compute_gradients(loss))
+    gvs, _ = tf.clip_by_global_norm(gvs, 5.0)
+    gvs = zip(gvs, v)
+    train_op = optimizer.apply_gradients(gvs, global_step=tf.train.get_global_step())
 
     # Provide an estimator spec for `ModeKeys.TRAIN` modes
     if mode == tf.estimator.ModeKeys.TRAIN:
@@ -377,10 +380,10 @@ def main(_):
         z = []
         for prob in preds:
             pctr.append(prob['pctr'])
-            y.append(prob['y'])
+            y.append(prob['click_y'])
 
             pctcvr.append(prob['pctcvr'])
-            z.append(prob['z'])
+            z.append(prob['conversion_y'])
         pctr = np.array(pctr)
         y = np.array(y)
         pctcvr = np.array(pctcvr)
@@ -413,7 +416,7 @@ def main(_):
         pctr_copy, y_copy, indices_click = utils.copy_positive(pctr, y, indices)
         pctcvr_copy, z_copy, indices_label = utils.copy_positive(pctcvr, z, indices)
         print(len(pctr_copy), len(y_copy), len(pctcvr_copy), len(z_copy))
-        click_result['loss'] = utils.evaluate_logloss(pctr, y)
+        click_result['loss'] = utils.evaluate_logloss(pctr_copy, y_copy)
         click_result['acc'] = utils.evaluate_acc(pctr_copy, y_copy)
         click_result['auc'] = utils.evaluate_auc(pctr, y)
         click_result['f1'] = utils.evaluate_f1_score(pctr_copy, y_copy)
@@ -428,7 +431,7 @@ def main(_):
         click_result['map5'] = utils.evaluate_map(5, pctr_copy, y_copy, indices_click)
         click_result['map10'] = utils.evaluate_map(10, pctr_copy, y_copy, indices_click)
 
-        conversion_result['loss'] = utils.evaluate_logloss(pctcvr, z)
+        conversion_result['loss'] = utils.evaluate_logloss(pctcvr_copy, z_copy)
         conversion_result['acc'] = utils.evaluate_acc(pctcvr_copy, z_copy)
         conversion_result['auc'] = utils.evaluate_auc(pctcvr, z)
         conversion_result['f1'] = utils.evaluate_f1_score(pctcvr_copy, z_copy)

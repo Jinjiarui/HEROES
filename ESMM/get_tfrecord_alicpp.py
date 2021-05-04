@@ -8,7 +8,7 @@ import tensorflow as tf
 flags = tf.flags
 FLAGS = flags.FLAGS
 LOG = tf.logging
-mode = 'test'
+mode = 'train'
 tf.flags.DEFINE_string("input_dir", "./../alicpp/%s/remap_sample" % mode, "input dir")
 tf.flags.DEFINE_string("output_dir", "./../alicpp/%s" % mode, "output dir")
 tf.flags.DEFINE_integer("threads", 64, "threads num")
@@ -37,8 +37,8 @@ def gen_tfrecords(in_file):
             y, z = fields[2], fields[3]
             y, z = [float(y)], [float(z)]
             feature = {
-                "y": tf.train.Feature(float_list=tf.train.FloatList(value=y)),
-                "z": tf.train.Feature(float_list=tf.train.FloatList(value=z))
+                "click_y": tf.train.Feature(float_list=tf.train.FloatList(value=y)),
+                "conversion_y": tf.train.Feature(float_list=tf.train.FloatList(value=z))
             }
             splits = [_.split(':') for _ in fields[6:]]
             ffv = np.reshape(splits, (-1, 3))

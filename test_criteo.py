@@ -39,14 +39,14 @@ def count_max(inf):
 def read_test(inf):
     def _parse_fn(record):
         features = {
-            "y": tf.FixedLenFeature([], tf.float32),
-            "z": tf.FixedLenFeature([], tf.float32),
+            "click_y": tf.FixedLenFeature([], tf.float32),
+            "conversion_y": tf.FixedLenFeature([], tf.float32),
             "features": tf.FixedLenFeature([10], tf.int64)
         }
         parsed = tf.parse_single_example(record, features)
-        y = parsed.pop('y')
-        z = parsed.pop('z')
-        return parsed, {"y": y, "z": z}
+        y = parsed.pop('click_y')
+        z = parsed.pop('conversion_y')
+        return parsed, {"click_y": y, "conversion_y": z}
 
     dataset = tf.data.TFRecordDataset(inf)
     dataset = dataset.map(_parse_fn)

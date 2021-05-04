@@ -32,7 +32,7 @@ def doParseLog(feat_cnts_dict, user_id_dict, item_id_dict):
             splits = re.split("[ ,]", line)
             user_id = 0
             item_id = 0
-            # y=0 & z=1过滤
+            # click_y=0 & conversion_y=1过滤
             if splits[2] == '0' and splits[3] == '1':
                 continue
             # remap feat_id

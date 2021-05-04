@@ -7,7 +7,7 @@ import tensorflow as tf
 flags = tf.flags
 FLAGS = flags.FLAGS
 LOG = tf.logging
-mod = 'train'
+mod = 'test'
 tf.flags.DEFINE_string("input_dir", "./../Criteo/%s" % (mod), "input dir")
 tf.flags.DEFINE_string("output_dir", "./../Criteo/%s" % (mod), "output dir")
 tf.flags.DEFINE_integer("threads", 64, "threads num")
@@ -29,8 +29,8 @@ def gen_tfrecords(in_file):
             for _ in range(seq_len - 1):
                 tmpline = fin.readline().split()
                 feature = {
-                    "y": tf.train.Feature(float_list=tf.train.FloatList(value=[float(tmpline[1])])),
-                    "z": tf.train.Feature(float_list=tf.train.FloatList(value=[float(0)]))
+                    "click_y": tf.train.Feature(float_list=tf.train.FloatList(value=[float(tmpline[1])])),
+                    "conversion_y": tf.train.Feature(float_list=tf.train.FloatList(value=[float(0)]))
                 }
                 feature.update({
                     "features": tf.train.Feature(
@@ -42,8 +42,8 @@ def gen_tfrecords(in_file):
 
             tmpline = fin.readline().split()
             feature = {
-                "y": tf.train.Feature(float_list=tf.train.FloatList(value=[float(tmpline[1])])),
-                "z": tf.train.Feature(float_list=tf.train.FloatList(value=[float(label)]))
+                "click_y": tf.train.Feature(float_list=tf.train.FloatList(value=[float(tmpline[1])])),
+                "conversion_y": tf.train.Feature(float_list=tf.train.FloatList(value=[float(label)]))
             }
             feature.update({
                 "features": tf.train.Feature(

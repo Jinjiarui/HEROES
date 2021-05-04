@@ -16,9 +16,9 @@ def doParseLog():
                     filed, feat_val = fstr.split('\x02')
                     feat, val = feat_val.split('\x03')
                     feat_id_dict["{}:{}".format(filed, feat)] += 1
-            # sample_id|y|z|common_feature_index|feat_num|feat_list
+            # sample_id|click_y|conversion_y|common_feature_index|feat_num|feat_list
             elif split_len == 6:
-                # y=0 & z=1过滤
+                # click_y=0 & conversion_y=1过滤
                 if splits[1] == '0' and splits[2] == '1':
                     continue
                 feat_strs = splits[5]

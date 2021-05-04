@@ -43,8 +43,8 @@ def gen_tfrecords(in_file):
             y = [float(fields[2])]
             z = [float(fields[3])]
             feature = {
-                "y": tf.train.Feature(float_list=tf.train.FloatList(value=y)),
-                "z": tf.train.Feature(float_list=tf.train.FloatList(value=z))
+                "click_y": tf.train.Feature(float_list=tf.train.FloatList(value=y)),
+                "conversion_y": tf.train.Feature(float_list=tf.train.FloatList(value=z))
             }
 
             splits = re.split('[ :]', fields[4])

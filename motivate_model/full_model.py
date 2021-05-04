@@ -35,7 +35,7 @@ class Model(object):
 
     def get_back_model(self, seq_max_len, n_hidden, n_classes, keep_prob,
                        prediction_embed_list, model_name='Heroes'):
-        rnn_model_list = ['Heroes', 'motivate', 'motivate-single', 'RRN', 'time_LSTM', 'Motivate-Heroes']
+        rnn_model_list = ['Heroes', 'motivate', 'motivate-single', 'RRN', 'LSTM', 'time_LSTM', 'Motivate-Heroes']
         if model_name in rnn_model_list:
             return back_model.RNN_Model(seq_max_len, n_hidden, n_classes, keep_prob, prediction_embed_list, model_name,
                                         self.dataset_name)
@@ -43,6 +43,8 @@ class Model(object):
             return back_model.STAMP(seq_max_len, n_hidden, keep_prob, prediction_embed_list)
         if model_name == 'NARM':
             return back_model.NARM(seq_max_len, n_hidden, keep_prob, prediction_embed_list)
+        if model_name == 'DUPN':
+            return back_model.DUPN(seq_max_len, n_hidden, keep_prob, prediction_embed_list)
 
     def get_embedding(self):
         position_copy = tf.tile(self.position_embedding,
@@ -85,16 +87,17 @@ class Model(object):
         if isinstance(prediction_c, list):
             prediction_c, prediction_v = tf.stack(prediction_c), tf.stack(prediction_v)
 
-        '''ops = tf.get_default_graph().get_operations()
+        '''
+        ops = tf.get_default_graph().get_operations()
         bn_update_ops = [x for x in ops if ("AssignMovingAvg" in x.name and x.type == "AssignSubVariableOp")]
-        tf.add_to_collection(tf.GraphKeys.UPDATE_OPS, bn_update_ops)'''
+        tf.add_to_collection(tf.GraphKeys.UPDATE_OPS, bn_update_ops)
+        '''
 
         mask = tf.sequence_mask(self.placeholders['seq_len'], self.seq_max_len)
         prediction_c = tf.boolean_mask(tf.transpose(prediction_c, [1, 0, 2]), mask)
         prediction_v = tf.boolean_mask(tf.transpose(prediction_v, [1, 0, 2]), mask)
         reshape_click_label = tf.boolean_mask(self.placeholders['click_label'], mask)
         reshape_conversion_label = tf.boolean_mask(self.placeholders['conversion_label'], mask)
-
         if training:
             click_loss = self.click_loss(prediction_c, reshape_click_label)
             conversion_loss = self.conversion_loss(prediction_v, reshape_conversion_label)
@@ -122,8 +125,9 @@ class Model(object):
             "CTCVR_ACC": tf.metrics.accuracy(reshape_conversion_label,
                                              tf.where(prediction_v >= threshold, one_cvr, zero_cvr))
         }
-
-        #train_op = self.optimizer.minimize(loss, global_step=self.global_step)
+        if not training:
+            return click_loss, conversion_loss, loss, eval_metric_ops, prediction_c, reshape_click_label, prediction_v, reshape_conversion_label
+        # train_op = self.optimizer.minimize(loss, global_step=self.global_step)
         gvs, v = zip(*self.optimizer.compute_gradients(loss))
         gvs, _ = tf.clip_by_global_norm(gvs, 5.0)
         gvs = zip(gvs, v)

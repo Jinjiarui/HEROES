@@ -307,12 +307,12 @@ class RNN_Model(tf.keras.layers.Layer):
                  dataset_name='Criteo'):
         super(RNN_Model, self).__init__()
         self.seq_max_len = tf.range(seq_max_len)
-        if model_name == 'RRN':
+        if model_name == 'RRN' or model_name == 'LSTM':
             self.cell = SimpleLstmCell(n_hidden, 4, n_classes, keep_prob, prediction_embed_list)
         elif model_name == 'Heroes':
             self.cell = HeroesCell(n_hidden, 5, n_classes, keep_prob, prediction_embed_list)
         elif model_name == 'Motivate-Heroes':
-            self.cell = MotivateHeroesCell(n_hidden, 7, n_classes, keep_prob, prediction_embed_list)
+            self.cell = MotivateHeroesCell(n_hidden, 9, n_classes, keep_prob, prediction_embed_list)
         elif model_name == 'motivate':
             self.cell = MotivateCell(n_hidden, 6, n_classes, keep_prob, prediction_embed_list)
         elif model_name == 'motivate-single':
@@ -344,47 +344,34 @@ class STAMP(tf.keras.layers.Layer):
                                         kernel_initializer='random_normal', name='w2')
         self.w3 = tf.keras.layers.Dense(units=n_hidden, use_bias=False,
                                         kernel_initializer='random_normal', name='w3')
-        self.prediction_c = [
-            [tf.keras.layers.Dense(units=prediction_embed_list[0], use_bias=True,
-                                   kernel_initializer='random_normal', name='pc_0'),
-             tf.keras.layers.Dense(units=prediction_embed_list[0], use_bias=True,
-                                   kernel_initializer='random_normal', name='pc_0_')
-             ]]
-        self.prediction_v = [
-            [tf.keras.layers.Dense(units=prediction_embed_list[0], use_bias=True,
-                                   kernel_initializer='random_normal', name='pv_0'),
-             tf.keras.layers.Dense(units=prediction_embed_list[0], use_bias=True,
-                                   kernel_initializer='random_normal', name='pv_0_')]
-        ]
+        self.prediction_c = [tf.keras.layers.Dense(units=prediction_embed_list[0], use_bias=True,
+                                                   kernel_initializer='random_normal', name='pc_0')]
+        self.prediction_v = [tf.keras.layers.Dense(units=prediction_embed_list[0], use_bias=True,
+                                                   kernel_initializer='random_normal', name='pv_0')]
         for i in range(1, len(prediction_embed_list)):
             self.prediction_c.append(
-                [tf.keras.layers.Dense(input_dim=prediction_embed_list[i - 1], units=prediction_embed_list[i],
-                                       use_bias=True, kernel_initializer='random_normal', name='pc_{}'.format(i)),
-                 tf.keras.layers.Dense(input_dim=prediction_embed_list[i - 1], units=prediction_embed_list[i],
-                                       use_bias=True, kernel_initializer='random_normal', name='pc_{}_'.format(i)),
-                 ])
+                tf.keras.layers.Dense(input_dim=prediction_embed_list[i - 1], units=prediction_embed_list[i],
+                                      use_bias=True, kernel_initializer='random_normal', name='pc_{}'.format(i)))
             self.prediction_v.append(
-                [tf.keras.layers.Dense(input_dim=prediction_embed_list[i - 1], units=prediction_embed_list[i],
-                                       use_bias=True, kernel_initializer='random_normal', name='pv_{}'.format(i)),
-                 tf.keras.layers.Dense(input_dim=prediction_embed_list[i - 1], units=prediction_embed_list[i],
-                                       use_bias=True, kernel_initializer='random_normal', name='pv_{}_'.format(i)),
-                 ])
+                tf.keras.layers.Dense(input_dim=prediction_embed_list[i - 1], units=prediction_embed_list[i],
+                                      use_bias=True, kernel_initializer='random_normal', name='pv_{}'.format(i)))
+        self.fc_c = tf.keras.layers.Dense(input_dim=prediction_embed_list[-1], units=1,
+                                          use_bias=True, kernel_initializer='random_normal', name='fc_c')
+        self.fc_v = tf.keras.layers.Dense(input_dim=prediction_embed_list[-1], units=1,
+                                          use_bias=True, kernel_initializer='random_normal', name='fc_v')
 
     def predict_call(self, inputs, target):
-        inputs1, inputs2 = inputs
         if target == 'c':
             predict_layers = self.prediction_c
+            fc = self.fc_c
         else:
             predict_layers = self.prediction_v
+            fc = self.fc_v
         for i in range(len(predict_layers)):
-            inputs1 = predict_layers[i][0](inputs1)
-            inputs1 = self.activate(inputs1)
-            inputs1 = self.drop_out(inputs1)
-
-            inputs2 = predict_layers[i][1](inputs2)
-            inputs2 = self.activate(inputs2)
-            inputs2 = self.drop_out(inputs2)
-        return tf.sigmoid(tf.reduce_sum(inputs1 * inputs2, -1, keep_dims=True))
+            inputs = predict_layers[i](inputs)
+            inputs = self.activate(inputs)
+            inputs = self.drop_out(inputs)
+        return tf.sigmoid(fc(inputs))
 
     def call(self, inputs, **kwargs):
         m_s = tf.cumsum(inputs) / tf.reshape(tf.range(self.seq_max_len, dtype=tf.float32) + 1, (-1, 1, 1))
@@ -394,8 +381,9 @@ class STAMP(tf.keras.layers.Layer):
         m_a = tf.map_fn(lambda i: tf.reduce_sum(
             self.w0(tf.sigmoid(x1[:i + 1] + x2[i:i + 1] + wms[i:i + 1])) * inputs[:i + 1], axis=0),
                         tf.range(self.seq_max_len), dtype=inputs.dtype)
-        prediction_c = self.predict_call([m_a, inputs], 'c')
-        prediction_v = self.predict_call([m_a, inputs], 'v')
+        x = tf.concat([m_a, inputs], axis=-1)
+        prediction_c = self.predict_call(x, 'c')
+        prediction_v = self.predict_call(x, 'v')
         prediction_v *= prediction_c
         return prediction_c, prediction_v
 
@@ -471,4 +459,62 @@ class NARM(tf.keras.layers.Layer):
         prediction_c = self.predict_call([c_t, inputs], 'c')
         prediction_v = self.predict_call([c_t, inputs], 'v')
         prediction_v *= prediction_c
+        return prediction_c, prediction_v
+
+
+class DUPN(tf.keras.layers.Layer):
+    def __init__(self, seq_max_len, n_hidden, keep_prob, prediction_embed_list):
+        super(DUPN, self).__init__()
+        self.n_hidden = n_hidden
+        self.seq_max_len = seq_max_len
+        self.drop_out = tf.keras.layers.Dropout(rate=1 - keep_prob)
+        self.activate = tf.keras.layers.LeakyReLU()
+        self.A1 = tf.keras.layers.Dense(input_dim=n_hidden, units=n_hidden, use_bias=False,
+                                        kernel_initializer='random_normal', name='A1')
+        self.A2 = tf.keras.layers.Dense(input_dim=n_hidden, units=n_hidden, use_bias=False,
+                                        kernel_initializer='random_normal', name='A2')
+        self.v = tf.keras.layers.Dense(input_dim=n_hidden, units=1, use_bias=False,
+                                       kernel_initializer='random_normal', name='v')
+        self.prediction_c = [tf.keras.layers.Dense(units=prediction_embed_list[0], use_bias=True,
+                                                   kernel_initializer='random_normal', name='pc_0')]
+        self.prediction_v = [tf.keras.layers.Dense(units=prediction_embed_list[0], use_bias=True,
+                                                   kernel_initializer='random_normal', name='pv_0')]
+        for i in range(1, len(prediction_embed_list)):
+            self.prediction_c.append(
+                tf.keras.layers.Dense(input_dim=prediction_embed_list[i - 1], units=prediction_embed_list[i],
+                                      use_bias=True, kernel_initializer='random_normal', name='pc_{}'.format(i)))
+            self.prediction_v.append(
+                tf.keras.layers.Dense(input_dim=prediction_embed_list[i - 1], units=prediction_embed_list[i],
+                                      use_bias=True, kernel_initializer='random_normal', name='pv_{}'.format(i)))
+        self.fc_c = tf.keras.layers.Dense(input_dim=prediction_embed_list[-1], units=1,
+                                          use_bias=True, kernel_initializer='random_normal', name='fc_c')
+        self.fc_v = tf.keras.layers.Dense(input_dim=prediction_embed_list[-1], units=1,
+                                          use_bias=True, kernel_initializer='random_normal', name='fc_v')
+        self.rnn = tf.keras.layers.LSTM(units=n_hidden, return_sequences=True, time_major=True)
+
+    def predict_call(self, inputs, target):
+        if target == 'c':
+            predict_layers = self.prediction_c
+            fc = self.fc_c
+        else:
+            predict_layers = self.prediction_v
+            fc = self.fc_v
+        for i in range(len(predict_layers)):
+            inputs = predict_layers[i](inputs)
+            inputs = self.activate(inputs)
+            inputs = self.drop_out(inputs)
+        return tf.sigmoid(fc(inputs))
+
+    def call(self, inputs, **kwargs):
+        h = self.rnn(inputs)  # (seq,bs,hidden)
+
+        a = tf.exp(tf.sigmoid(self.v(self.A1(inputs) + self.A2(h))))  # (seq,bs,1)
+        a_sum = tf.cumsum(a)
+        a = a / a_sum  # (seq,bs,1)
+
+        rep = tf.cumsum(a * h)  # (seq,bs,hidden)
+        prediction_c = self.predict_call(rep, 'c')
+        prediction_v = self.predict_call(rep, 'v')
+        prediction_v *= prediction_c
+
         return prediction_c, prediction_v

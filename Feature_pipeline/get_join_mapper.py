@@ -32,9 +32,9 @@ def doParseLog():
                     feat_lists.append('%s:%s:%s' % (filed, feat, val))
                 # mapper把common_feature_index作为key，保证Skeleton 和 Common Features两份数据落到同一个reduce上
                 print("{0}\t{1}\t{2}".format(splits[0], 'common', ' '.join(feat_lists)))
-            # sample_id|y|z|common_feature_index|feat_num|feat_list
+            # sample_id|click_y|conversion_y|common_feature_index|feat_num|feat_list
             elif split_len == 6:
-                # y=0 & z=1过滤
+                # click_y=0 & conversion_y=1过滤
                 if splits[1] == '0' and splits[2] == '1':
                     continue
                 feat_strs = splits[5]

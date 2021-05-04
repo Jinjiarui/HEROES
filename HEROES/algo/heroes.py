@@ -70,7 +70,7 @@ class HEROES(BaseModel):
         CTRcell = Cell(self.hidden_size[0], self.hidden_dim, self.hidden_size[1], self.reuse) # num_unit, h_below_size, h_above_size
         CVRcell = Cell(self.hidden_size[1], self.hidden_size[0], self.hidden_size[0], self.reuse)
         self.cell = MutliCell([CTRcell, CVRcell])
-        # c, h: hidden_dim, z:1
+        # c, h: hidden_dim, conversion_y:1
         hidden_len = sum(self.hidden_size)*2+2
         # states: seq_len, batch_size, hidden_len
         states = tf.scan(self._build_recurrent, embed, initializer=tf.zeros([self.batch_size, hidden_len]))  # initializer for accum
