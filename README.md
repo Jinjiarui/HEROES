@@ -1,4 +1,5 @@
-# Unbiased Ranking of Universal User Behavior
+# Hierarchical rEcurrent Ranking On the Entire Space (HEROES)
+
 This is a *tensorflow* implement of our Model: ***Learning Universal User Behaviors with Hierarchical Recurrentsurvival Model for Unbiased Ranking*** and some
 other baseline models(ESMM, ESMM2, DNN, MMOE).
 ## Dataset
