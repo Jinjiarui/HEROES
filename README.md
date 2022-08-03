@@ -1,7 +1,7 @@
 # Hierarchical rEcurrent Ranking On the Entire Space (HEROES)
 
 <p align="center">
-  <img src="image/heroes.png" width="600">
+  <img src="image/heroes.png" width="550">
   <br />
   <br />
 </p>
