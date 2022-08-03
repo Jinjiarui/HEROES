@@ -5,7 +5,6 @@
   <br />
   <br />
 </p>
-
 This includes`tensorflow` and `pytorch` implementations of HEROES model. This is the experiment code in the following work:
 > Multi-Scale User Behavior Network for Entire Space Multi-Task Learning </br>
 Jiarui Jin, Xianyu Chen, Weinan Zhang, Yuanbo Chen, Zaifan Jiang, Zekun Zhu, Zhewen Su, Yong Yu. </br>
